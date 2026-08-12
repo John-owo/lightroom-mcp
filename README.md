@@ -1,6 +1,16 @@
 # Lightroom MCP＋RAW 挑圖調色 Skill v2
 
-這個 fork 把 Lightroom MCP 與完整的 `raw-photo-lightroom-preset` v2 skill 放在同一個 repository，涵蓋：
+這個 fork 最初把 Lightroom MCP 與完整的 `raw-photo-lightroom-preset` v2 skill 放在同一個 repository。v0.1 之後，上層 workflow engine 已抽離至 [`John-owo/photo-agent`](https://github.com/John-owo/photo-agent)。
+
+## 專案邊界：這裡是 MCP backend，不是 workflow agent
+
+本 repository 負責可獨立使用的 Lightroom Classic 整合層：MCP server、Lua 外掛、catalog／Develop 操作、checkpoint 與 render／export 工具。Claude、Codex 或其他 MCP client 都可直接使用，不需要安裝 PhotoAgent。
+
+`photo-agent` 負責持久化工作流程狀態、安全／恢復政策、closed-loop 評估、選片、場景分群與整場拍攝編排，並可把本專案當成其中一個 backend。依賴是單向的：`photo-agent -> lightroom-mcp`；本專案不依賴 PhotoAgent。
+
+repository 內既有的 `raw-photo-lightroom-preset` 保留為歷史工作流程指引與可獨立使用的 client recipe。新的 workflow engine 功能與 roadmap 放在 `photo-agent`；Lightroom 專用工具與 transport 留在這裡。
+
+本 fork 的 Lightroom／skill 歷史範圍涵蓋：
 
 - RAW／JPG 配對與挑圖；
 - 按光線場景分群；

@@ -78,3 +78,6 @@ Unverified boundaries:
 - Authorized push succeeded: branch `codex/project-boundary-docs` was created on
   `origin` at commit `0ccfc88`. GitHub printed the pull-request URL; no PR was
   created because the user authorized pushing, not PR creation.
+- Final ref/status check: local `HEAD` and `origin/codex/project-boundary-docs`
+  both equal `cc51c6a`. Only the pre-existing server lifecycle files remain
+  modified/untracked locally; the published documentation scope is clean.

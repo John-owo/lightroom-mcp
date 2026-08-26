@@ -250,3 +250,10 @@ Unverified boundaries:
 - Review-fix scoped `git add` succeeded and `git diff --cached --check`
   passed with no whitespace errors. A new commit will follow without
   rewriting `d453190`.
+- Standards re-review correction: the earlier commit/amend planning entries
+  above are superseded by the factual result recorded here. Review-fix commit
+  `229d524` was successfully created; post-commit `git status --short
+  --branch` returned only `## codex/roadmap-t01`, so the T01 review-fix
+  worktree was clean and no commit remained pending at that verification.
+- Worklog-only correction `git diff --check` passed; Git emitted only the
+  expected LF-to-CRLF normalization warning.

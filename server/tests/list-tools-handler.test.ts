@@ -54,10 +54,11 @@ describe('TOOL_DEFINITIONS', () => {
 
   it('is generated from tool contracts', () => {
     expect(TOOL_DEFINITIONS).toEqual(
-      TOOL_CONTRACTS.map(({ name, description, inputSchema }) => ({
+      TOOL_CONTRACTS.map(({ name, description, inputSchema, outputSchema }) => ({
         name,
         description,
         inputSchema,
+        ...(outputSchema ? { outputSchema } : {}),
       })),
     );
   });
@@ -129,6 +130,32 @@ describe('photo identity contract', () => {
     });
     expect(tool?.description).toMatch(/UUID/i);
     expect(tool?.description).toMatch(/Virtual Copy/i);
+  });
+
+  it('declares a typed structured identity output', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'get_photo_metadata');
+    const outputSchema = tool?.outputSchema;
+    const properties = outputSchema?.properties as Record<string, {
+      type?: string;
+      pattern?: string;
+      items?: { properties?: Record<string, object>; required?: string[] };
+    }>;
+
+    expect(outputSchema?.type).toBe('object');
+    expect(outputSchema?.required).toEqual(expect.arrayContaining([
+      'catalog_id',
+      'uuid',
+      'is_virtual_copy',
+      'virtual_copy_count',
+    ]));
+    expect(properties.catalog_id).toMatchObject({ type: 'string', pattern: '^[0-9]+$' });
+    expect(properties.uuid).toMatchObject({ type: 'string' });
+    expect(properties.virtual_copies).toMatchObject({
+      type: 'array',
+      items: expect.objectContaining({
+        required: expect.arrayContaining(['catalog_id', 'uuid', 'is_virtual_copy']),
+      }),
+    });
   });
 });
 

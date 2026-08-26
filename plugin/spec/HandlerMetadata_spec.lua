@@ -203,7 +203,7 @@ describe("HandlerMetadata.getPhotoMetadata", function()
     it("errors when photo not found", function()
         local _, Handler = setup({})
         assert.has_error(function()
-            Handler.getPhotoMetadata({ photo_id = "missing" })
+            Handler.getPhotoMetadata({ photo_id = "999" })
         end)
     end)
 

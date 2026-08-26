@@ -195,7 +195,7 @@ end)
 describe("HandlerDevelop.createDevelopPreset", function()
     it("creates a versioned plugin checkpoint from explicit photo settings", function()
         local photo = helper.fakePhoto({
-            id = "source",
+            id = "30",
             path = "/raw/source.nef",
             developSettings = {
                 Exposure2012 = 0.5,
@@ -207,7 +207,7 @@ describe("HandlerDevelop.createDevelopPreset", function()
         local _, Handler, state = setup({ photos = { photo } })
 
         local r = Handler.createDevelopPreset({
-            photo_id = "source",
+            photo_id = "30",
             preset_name = "John Warm v2",
             settings = { "Contrast2012", "ToneCurvePV2012" },
         })
@@ -225,18 +225,18 @@ describe("HandlerDevelop.createDevelopPreset", function()
     it("refuses duplicate names and missing source settings", function()
         local existing = fakePreset("Existing")
         local photo = helper.fakePhoto({
-            id = "source", path = "/raw/source.nef", developSettings = { Exposure2012 = 0.5 },
+            id = "31", path = "/raw/source.nef", developSettings = { Exposure2012 = 0.5 },
         })
         local _, Handler = setup({ photos = { photo }, pluginPresets = { existing } })
 
         assert.has_error(function()
             Handler.createDevelopPreset({
-                photo_id = "source", preset_name = "Existing", settings = { "Exposure2012" },
+                photo_id = "31", preset_name = "Existing", settings = { "Exposure2012" },
             })
         end, "Plugin preset already exists; use a versioned preset_name")
         assert.has_error(function()
             Handler.createDevelopPreset({
-                photo_id = "source", preset_name = "New", settings = { "Contrast2012" },
+                photo_id = "31", preset_name = "New", settings = { "Contrast2012" },
             })
         end, "Source photo has no develop setting: Contrast2012")
     end)
@@ -317,7 +317,7 @@ describe("HandlerDevelop.applyDevelopPreset", function()
         local folders = { fakeFolder("User", { fakePreset("Moody") }) }
         local _, Handler = setup({ photos = { p1 }, folders = folders })
 
-        local r = Handler.applyDevelopPreset({ photo_ids = { "1", "missing" }, preset_name = "Moody" })
+        local r = Handler.applyDevelopPreset({ photo_ids = { "1", "999" }, preset_name = "Moody" })
 
         assert.are.equal(1, r.applied)
     end)
@@ -429,16 +429,16 @@ describe("HandlerDevelop.copyDevelopSettings", function()
     it("errors when source missing", function()
         local _, Handler = setup({ photos = {} })
         assert.has_error(function()
-            Handler.copyDevelopSettings({ source_id = "missing", target_ids = { "t" } })
+            Handler.copyDevelopSettings({ source_id = "999", target_ids = { "998" } })
         end)
     end)
 
     it("requires source_id and target_ids", function()
         local catalog, Handler = setup({})
-        assert.has_error(function() Handler.copyDevelopSettings({ target_ids = { "t" } }) end)
-        assert.has_error(function() Handler.copyDevelopSettings({ source_id = "s" }) end)
-        assert.has_error(function() Handler.copyDevelopSettings({ source_id = "s", target_ids = {} }) end)
-        assert.has_error(function() Handler.copyDevelopSettings({ source_id = "s", target_ids = { "" } }) end)
+        assert.has_error(function() Handler.copyDevelopSettings({ target_ids = { "998" } }) end)
+        assert.has_error(function() Handler.copyDevelopSettings({ source_id = "999" }) end)
+        assert.has_error(function() Handler.copyDevelopSettings({ source_id = "999", target_ids = {} }) end)
+        assert.has_error(function() Handler.copyDevelopSettings({ source_id = "999", target_ids = { "" } }) end)
         assert.are.equal(0, catalog.getWriteAccessCount())
     end)
 
@@ -504,7 +504,7 @@ describe("HandlerDevelop.setDevelopSettings", function()
     it("errors when photo not found", function()
         local _, Handler = setup({ photos = {} })
         assert.has_error(function()
-            Handler.setDevelopSettings({ photo_id = "missing", settings = { Exposure2012 = 1 } })
+            Handler.setDevelopSettings({ photo_id = "999", settings = { Exposure2012 = 1 } })
         end)
     end)
 

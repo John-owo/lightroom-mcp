@@ -210,3 +210,43 @@ Unverified boundaries:
   succeeded as `a5d6121`. The final append-only worklog entry will be folded
   into this same commit with `git commit --amend --no-edit`; no additional
   source changes are planned.
+- Review correction: the amend completed and superseded `a5d6121` with final
+  commit `d453190`; the repository is currently clean at `d453190`. This
+  entry is append-only factual history; the review-fix commit will be added
+  without rewriting either prior commit.
+- Review-fix red run: targeted Jest could not compile because the inferred
+  output schema widened `type` to `string`, which is incompatible with the
+  MCP Tool output-schema literal type `"object"`.
+- Review-fix Lua red run: the existing unknown-photo test passed the now-invalid
+  identifier `"missing"`; after numeric-only validation this correctly failed
+  closed, so the test was updated to use unknown numeric ID `"999"`.
+- Review-fix targeted Lua fallback runner passed: HandlerMetadata,
+  PhotoLookup, HandlerSelection, and HandlerSearch specs, `RESULT: 47 passed,
+  0 failed`.
+- Review-fix targeted server run passed: list-tools, MCP server, and real
+  Dispatcher/FakePlugin transport integration suites, 3 suites and 71 tests.
+- Expanded the transport integration to assert the MCP client rejects a
+  malformed `virtual_copy_count` type; `npm test -- --runInBand
+  server/tests/identity-integration.test.ts` passed 1/1.
+- Review-fix full Lua fallback runner passed all 12 plugin specs:
+  `RESULT: 129 passed, 0 failed`.
+- `luac.exe -p` passed for all 30 plugin Lua source/spec files.
+- Review-fix source-only Selene lint passed for the five changed plugin
+  modules: `0 errors, 0 warnings, 0 parse errors`.
+- Review-fix server `npm run check` passed (`tsc --noEmit` and test-config
+  typecheck).
+- Review-fix server `npm run lint` passed (`eslint src tests`).
+- Review-fix server `npm run build` passed (`tsc`).
+- Review-fix full server `npm test -- --runInBand` passed: 14 suites, 164
+  tests.
+- Review-fix `git diff --check` passed; Git emitted only expected
+  LF-to-CRLF normalization warnings.
+- Final pre-commit `git diff --check` passed; only expected LF-to-CRLF
+  normalization warnings were emitted.
+- Review-fix finalization plan: stage the scoped identity, lookup, output
+  contract, integration-test, compatibility-test, and WORKLOG changes, then
+  create a new commit `fix: close T01 review findings (#2)` without rewriting
+  `d453190`.
+- Review-fix scoped `git add` succeeded and `git diff --cached --check`
+  passed with no whitespace errors. A new commit will follow without
+  rewriting `d453190`.

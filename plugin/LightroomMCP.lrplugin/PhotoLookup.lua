@@ -12,20 +12,29 @@ local function isPathIdentifier(id)
         or id:match("^[A-Za-z]:") ~= nil
 end
 
-local function validateIdentifier(id)
-    if id == nil or tostring(id) == "" then
-        error("Photo identity requires a stable catalog ID", 0)
-    end
+local function normalizeCatalogId(id)
     if isPathIdentifier(id) then
         error("Path-only photo identity is unsupported; use catalog_id", 0)
     end
+    if type(id) == "number" then
+        if id ~= id or id < 0 or id % 1 ~= 0 then
+            error("Catalog photo ID must be a non-negative integer", 0)
+        end
+        return tostring(id)
+    end
+    if type(id) == "string" and id:match("^%d+$") then
+        local canonical = id:gsub("^0+", "")
+        return canonical == "" and "0" or canonical
+    end
+    error("Catalog photo ID must be a number or digit string", 0)
 end
 
 function PhotoLookup.resolveMany(catalog, photoIds)
     photoIds = photoIds or {}
     local results = {}
+    local normalizedIds = {}
     for i, id in ipairs(photoIds) do
-        validateIdentifier(id)
+        normalizedIds[i] = normalizeCatalogId(id)
         results[i] = { id = id, photo = nil }
     end
 
@@ -38,7 +47,7 @@ function PhotoLookup.resolveMany(catalog, photoIds)
     for _, p in ipairs(catalog:getAllPhotos()) do
         local lid = p.localIdentifier
         if lid ~= nil then
-            local key = tostring(lid)
+            local key = normalizeCatalogId(lid)
             if byLocalId[key] and byLocalId[key] ~= p then
                 duplicateLocalIds[key] = true
                 byLocalId[key] = nil
@@ -49,7 +58,7 @@ function PhotoLookup.resolveMany(catalog, photoIds)
     end
 
     for i, id in ipairs(photoIds) do
-        local key = tostring(id)
+        local key = normalizedIds[i]
         if duplicateLocalIds[key] then
             error("Ambiguous catalog photo ID: " .. tostring(id), 0)
         end

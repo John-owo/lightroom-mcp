@@ -8,22 +8,33 @@ local function catalogId(photo)
     return tostring(photo.localIdentifier)
 end
 
-local function photoReference(photo)
+local function identityFields(photo)
     if not photo then return nil end
 
     return {
-        id = photo.localIdentifier,
         catalog_id = catalogId(photo),
         uuid = photo:getRawMetadata('uuid'),
-        path = photo:getRawMetadata('path'),
-        filename = photo:getFormattedMetadata('fileName'),
         copy_name = photo:getFormattedMetadata('copyName'),
         is_virtual_copy = photo:getRawMetadata('isVirtualCopy') == true,
     }
 end
 
+local function photoReference(photo)
+    if not photo then return nil end
+
+    local reference = {
+        id = photo.localIdentifier,
+        path = photo:getRawMetadata('path'),
+        filename = photo:getFormattedMetadata('fileName'),
+    }
+    for key, value in pairs(identityFields(photo)) do
+        reference[key] = value
+    end
+    return reference
+end
+
 function PhotoIdentity.describe(photo)
-    local reference = photoReference(photo)
+    local reference = identityFields(photo)
     if not reference then return nil end
 
     local master = photo:getRawMetadata('masterPhoto')
@@ -38,12 +49,14 @@ function PhotoIdentity.describe(photo)
         for _, copy in ipairs(photo:getRawMetadata('virtualCopies') or {}) do
             table.insert(virtualCopies, photoReference(copy))
         end
+        if #virtualCopies > 0 then
+            reference.virtual_copies = virtualCopies
+        end
     end
 
     reference.master = masterReference
     reference.master_id = masterReference and masterReference.catalog_id or nil
     reference.master_uuid = masterReference and masterReference.uuid or nil
-    reference.virtual_copies = virtualCopies
     reference.virtual_copy_count = copyCount or #virtualCopies
     return reference
 end

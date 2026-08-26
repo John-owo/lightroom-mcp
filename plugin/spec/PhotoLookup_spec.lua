@@ -40,6 +40,29 @@ describe("PhotoLookup.resolveMany", function()
         assert.are.equal(1, state.getAllPhotosCalls)
     end)
 
+    it("canonicalizes digit strings and numeric catalog IDs", function()
+        local p1 = fakePhoto(1, "/a.jpg")
+        local p2 = fakePhoto(2, "/b.jpg")
+        local catalog, _ = fakeCatalog({ p1, p2 })
+
+        local r = PhotoLookup.resolveMany(catalog, { "001", 2 })
+
+        assert.are.equal(p1, r[1].photo)
+        assert.are.equal(p2, r[2].photo)
+    end)
+
+    it("rejects non-numeric and non-scalar identifiers before catalog access", function()
+        local catalog, state = fakeCatalog({ fakePhoto(1, "/a.jpg") })
+        local invalidIds = { "abc", true, {}, 1.5 }
+
+        for _, invalidId in ipairs(invalidIds) do
+            assert.has_error(function()
+                PhotoLookup.resolveMany(catalog, { invalidId })
+            end)
+        end
+        assert.are.equal(0, state.getAllPhotosCalls)
+    end)
+
     it("rejects path-only identifiers", function()
         local p1 = fakePhoto(1, "/a.jpg")
         local p2 = fakePhoto(2, "/b.jpg")
@@ -122,6 +145,6 @@ describe("PhotoLookup.resolveOne", function()
 
     it("returns nil when nothing matches", function()
         local catalog, _ = fakeCatalog({})
-        assert.is_nil(PhotoLookup.resolveOne(catalog, "missing"))
+        assert.is_nil(PhotoLookup.resolveOne(catalog, "999"))
     end)
 end)

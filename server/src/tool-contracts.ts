@@ -7,6 +7,7 @@ export interface ToolContract {
   description: string;
   luaHandler: string;
   inputSchema: InputSchema;
+  outputSchema?: Tool["outputSchema"];
 }
 
 const MAX_BULK_PHOTO_IDS = 1000;
@@ -126,6 +127,42 @@ const photoIdArray = (description: string) => ({
   items: catalogPhotoId,
 });
 
+const photoIdentityReferenceOutputSchema = {
+  type: "object",
+  properties: {
+    catalog_id: catalogPhotoId,
+    uuid: { type: "string", minLength: 1 },
+    path: { type: "string" },
+    filename: { type: "string" },
+    copy_name: { type: "string" },
+    is_virtual_copy: { type: "boolean" },
+  },
+  required: ["catalog_id", "uuid", "is_virtual_copy"],
+};
+
+/**
+ * Identity fields returned by get_photo_metadata. Other metadata fields stay
+ * additive, while these fields are validated by MCP structuredContent.
+ */
+export const PHOTO_METADATA_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
+  type: "object",
+  properties: {
+    catalog_id: catalogPhotoId,
+    uuid: { type: "string", minLength: 1 },
+    copy_name: { type: "string" },
+    is_virtual_copy: { type: "boolean" },
+    master: photoIdentityReferenceOutputSchema,
+    master_id: catalogPhotoId,
+    master_uuid: { type: "string", minLength: 1 },
+    virtual_copies: {
+      type: "array",
+      items: photoIdentityReferenceOutputSchema,
+    },
+    virtual_copy_count: { type: "integer", minimum: 0 },
+  },
+  required: ["catalog_id", "uuid", "is_virtual_copy", "virtual_copy_count"],
+};
+
 const dateStringSchema = (description: string) => ({
   type: "string",
   pattern: "^\\d{4}-\\d{2}-\\d{2}$",
@@ -212,6 +249,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     luaHandler: "HandlerMetadata.getPhotoMetadata",
     description:
       "Get detailed metadata and persistent identity for a Lightroom catalog photo: stable catalog ID, UUID, Master relationship, Virtual Copy status and siblings, EXIF, title/caption/headline, GPS (latitude/longitude/altitude), IPTC location (sublocation/city/stateProvince/country/isoCountryCode), copyright, and develop settings. Use the catalog ID for identity; source paths are display-only and are not accepted as selectors.",
+    outputSchema: PHOTO_METADATA_OUTPUT_SCHEMA,
     inputSchema: {
       type: "object",
       additionalProperties: false,

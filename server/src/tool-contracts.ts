@@ -114,8 +114,17 @@ const stringArray = (description: string, maxItems?: number) => ({
   description,
 });
 
-const photoIdArray = (description: string) =>
-  stringArray(description, MAX_BULK_PHOTO_IDS);
+const catalogPhotoId = {
+  type: "string",
+  minLength: 1,
+  pattern: "^[0-9]+$",
+  description: "Stable Lightroom catalog photo ID (localIdentifier); paths are not accepted",
+};
+
+const photoIdArray = (description: string) => ({
+  ...stringArray(description, MAX_BULK_PHOTO_IDS),
+  items: catalogPhotoId,
+});
 
 const dateStringSchema = (description: string) => ({
   type: "string",
@@ -202,12 +211,12 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_photo_metadata",
     luaHandler: "HandlerMetadata.getPhotoMetadata",
     description:
-      "Get detailed metadata for a specific photo: EXIF, title/caption/headline, GPS (latitude/longitude/altitude), IPTC location (sublocation/city/stateProvince/country/isoCountryCode), copyright, and develop settings",
+      "Get detailed metadata and persistent identity for a Lightroom catalog photo: stable catalog ID, UUID, Master relationship, Virtual Copy status and siblings, EXIF, title/caption/headline, GPS (latitude/longitude/altitude), IPTC location (sublocation/city/stateProvince/country/isoCountryCode), copyright, and develop settings. Use the catalog ID for identity; source paths are display-only and are not accepted as selectors.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_id: { type: "string", description: "Photo ID or file path" },
+        photo_id: catalogPhotoId,
       },
       required: ["photo_id"],
     },
@@ -248,7 +257,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       additionalProperties: false,
       properties: {
         collection_name: { type: "string", description: "Collection name" },
-        photo_ids: photoIdArray("Array of photo IDs or file paths"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs; paths are not accepted"),
       },
       required: ["collection_name", "photo_ids"],
     },
@@ -261,7 +270,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_ids: photoIdArray("Array of photo IDs or file paths"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs; paths are not accepted"),
         add_keywords: stringArray("Keywords to add", MAX_KEYWORDS),
         remove_keywords: stringArray("Keywords to remove", MAX_KEYWORDS),
       },
@@ -276,7 +285,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_ids: photoIdArray("Array of photo IDs or file paths"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs; paths are not accepted"),
         rating: {
           type: "number",
           description: "Star rating (0-5)",
@@ -316,7 +325,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_ids: photoIdArray("Array of photo IDs or file paths to export"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs to export; paths are not accepted"),
         destination: { type: "string", description: "Export destination folder" },
         format: {
           type: "string",
@@ -376,7 +385,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_id: { type: "string", minLength: 1, description: "Source photo ID or file path" },
+        photo_id: { ...catalogPhotoId, description: "Stable Lightroom catalog photo ID; paths are not accepted" },
         preset_name: {
           type: "string",
           minLength: 1,
@@ -427,7 +436,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_ids: photoIdArray("Array of photo IDs or file paths"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs; paths are not accepted"),
         preset_name: {
           type: "string",
           description: "Preset name",
@@ -449,10 +458,10 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       additionalProperties: false,
       properties: {
         source_id: {
-          type: "string",
-          description: "Source photo ID or file path",
+          ...catalogPhotoId,
+          description: "Stable Lightroom catalog photo ID; paths are not accepted",
         },
-        target_ids: photoIdArray("Target photo IDs or file paths"),
+        target_ids: photoIdArray("Target stable Lightroom catalog photo IDs; paths are not accepted"),
         settings: {
           type: "array",
           items: {
@@ -478,8 +487,8 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       additionalProperties: false,
       properties: {
         photo_id: {
-          type: "string",
-          description: "Photo ID or file path",
+          ...catalogPhotoId,
+          description: "Stable Lightroom catalog photo ID; paths are not accepted",
         },
         settings: {
           type: "object",

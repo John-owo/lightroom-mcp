@@ -45,12 +45,17 @@ describe("HandlerSelection.getSelectedPhotos", function()
         setup({
             photos = { helper.fakePhoto({
                 id = "42", path = "/x.jpg", fileName = "x.jpg",
+                uuid = "uuid-42", copyName = "主版本",
                 rating = 4, dateTimeOriginal = "2026-05-06",
             }) },
         })
         local r = Handler.getSelectedPhotos({})
         local p = r.photos[1]
         assert.are.equal("42", p.id)
+        assert.are.equal("42", p.catalog_id)
+        assert.are.equal("uuid-42", p.uuid)
+        assert.is_false(p.is_virtual_copy)
+        assert.are.equal("主版本", p.copy_name)
         assert.are.equal("/x.jpg", p.path)
         assert.are.equal("x.jpg", p.filename)
         assert.are.equal(4, p.rating)

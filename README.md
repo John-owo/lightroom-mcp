@@ -66,7 +66,7 @@ style_status, lighting_cluster, confidence, notes
 ## 歷史色調迭代流程
 
 1. 選一張不會破壞 master edit 的代表 RAW 或 virtual copy。
-2. 讀取目前 metadata／Develop settings，輸出一張 baseline JPEG。
+2. 讀取目前 metadata／Develop settings 與穩定 catalog ID/UUID、Master／Virtual Copy 關係，輸出一張 baseline JPEG。
 3. 用 `get_develop_preset` 讀取已認可的歷史 preset；同名時用 UUID 或 folder／scope 消除歧義。
 4. 每次只做一小段：技術校正、明暗形狀、色彩校正、創意風格、細節／降噪。
 5. 每段都從 Lightroom 輸出新預覽並實際比較，不一次猜大量滑桿。

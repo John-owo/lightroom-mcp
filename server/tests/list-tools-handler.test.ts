@@ -113,6 +113,25 @@ describe('tool required fields', () => {
   );
 });
 
+describe('photo identity contract', () => {
+  it('requires a stable catalog ID and documents persistent relationships', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'get_photo_metadata');
+    const properties = tool?.inputSchema.properties as Record<string, {
+      type?: string;
+      minLength?: number;
+      pattern?: string;
+    }>;
+
+    expect(properties.photo_id).toMatchObject({
+      type: 'string',
+      minLength: 1,
+      pattern: '^[0-9]+$',
+    });
+    expect(tool?.description).toMatch(/UUID/i);
+    expect(tool?.description).toMatch(/Virtual Copy/i);
+  });
+});
+
 describe('set_keywords schema', () => {
   it('caps add/remove keyword arrays', () => {
     const tool = TOOL_DEFINITIONS.find((t) => t.name === 'set_keywords');

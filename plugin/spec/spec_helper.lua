@@ -50,6 +50,8 @@ for _, key in ipairs({
     -- File / catalog
     "fileName", "fileSize", "fileFormat", "path", "dimensions",
     "rating", "colorNameForLabel", "pickStatus", "keywords",
+    "uuid", "isVirtualCopy", "masterPhoto", "virtualCopies",
+    "countVirtualCopies",
     -- EXIF
     "dateTimeOriginal", "dateTimeDigitized", "cameraMake", "cameraModel",
     "cameraSerialNumber", "lens", "isoSpeedRating", "focalLength",
@@ -57,7 +59,7 @@ for _, key in ipairs({
     "exposureProgram", "meteringMode", "flash", "artist", "software",
     "gps", "gpsAltitude",
     -- IPTC content / location / rights
-    "title", "caption", "headline", "location", "city", "stateProvince",
+    "title", "caption", "headline", "copyName", "location", "city", "stateProvince",
     "country", "isoCountryCode", "creator", "copyright", "copyrightState",
     "rightsUsageTerms",
 }) do

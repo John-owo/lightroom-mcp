@@ -104,3 +104,109 @@ Unverified boundaries:
   access control; it did not change repository or runtime state.
 - No Lightroom connection, catalog operation, photo mutation, visual QA, GitHub
   write, commit, push, or issue closure has been performed by this baseline.
+
+## 2026-08-27 - T01 identity implementation
+
+- Read this worktree's `AGENTS.md`, `CLAUDE.md`, `WORKLOG.md`, and workspace
+  `PHOTO_WORKSPACE.md` before inspecting code. Worktree branch is
+  `codex/roadmap-t01`; status was clean at `46d3543`.
+- `gh issue view 2 --repo John-owo/lightroom-mcp --comments` could not reach
+  GitHub from the sandbox (`connectex ... socket ... forbidden`). The issue
+  acceptance criteria supplied by the orchestrator are the active scope.
+- Web retrieval of the issue page/API was attempted but returned cache miss /
+  unsafe URL; no live GitHub issue evidence is claimed.
+- Escalated read-only `gh issue view 2 --repo John-owo/lightroom-mcp --json
+  number,title,body,state,labels,assignees,parent,subIssues,blockedBy,blocking,url`.
+  GitHub confirms title `[T01] Read stable Lightroom photo identity and
+  relationships`, no blockers, and blocker edge to issue #4 `[T03] Create and
+  reconcile an identity-verified Workflow Copy`. Acceptance criteria are:
+  distinguish Master/every Virtual Copy sharing a path; fail closed for
+  path-only or ambiguous identity; cover persistent identity and non-ASCII data
+  in MCP contract/integration tests.
+- Targeted repository inventory found the existing TypeScript contract at
+  `server/src/tool-contracts.ts`, server tests under `server/tests`, plugin
+  dispatch in `plugin/LightroomMCP.lrplugin/PluginInfoProvider.lua`, and Lua
+  handlers/specs under the corresponding plugin/spec directories.
+- Read-only dependency audit: issue #4 is blocked by #2 (T01) and #3 (T02);
+  issue #2 has no blockers and blocks #4. The T01 implementation therefore
+  stops at identity/readback and does not implement creation/serialization,
+  which belongs to T03/T02.
+- Read-only `gh issue view 3 ...`: T02 owns the serialized plugin queue,
+  exclusive selection ownership, operation concurrency/retry semantics, and
+  queue/error-finalization/dispatch-parity tests. T01 avoids those boundaries.
+- `gh issue view 2 --json comments` returned no comments, so no additional
+  issue-specific acceptance detail was available.
+- TDD red test added first in `plugin/spec/HandlerMetadata_spec.lua` for
+  persistent catalog/UUID identity, Master/Virtual Copy relationships, copy
+  names, and non-ASCII catalog data. Implementation is intentionally pending
+  until the red result is observed.
+- `mise exec -- busted plugin/spec/HandlerMetadata_spec.lua` failed because
+  this worktree's `.mise.toml` was untrusted; `mise trust` succeeded in the
+  local mise state, but `mise run lua:deps` then failed before running tests
+  because network/tool-install access is unavailable and the existing shared
+  `lua_modules` junction has no `bin/busted`. No Lua test result is claimed.
+- Added the first TypeScript red test in `server/tests/list-tools-handler.test.ts`
+  for a stable catalog-ID schema and persistent identity wording. The targeted
+  command `npm test -- --runInBand server/tests/list-tools-handler.test.ts`
+  failed as expected: the existing `photo_id` schema lacked `minLength` and
+  numeric `pattern`; 55 existing tests passed and the new test failed.
+- Implemented the smallest contract change: `get_photo_metadata.photo_id` now
+  requires a non-empty numeric catalog ID, and its description documents UUID,
+  Master/Virtual Copy readback and path rejection. The same targeted TypeScript
+  test command passed (56/56).
+- Implemented the identity readback seam in `PhotoIdentity.lua` and enriched
+  metadata, search, and selection photo results with canonical string
+  `catalog_id`, persistent `uuid`, `copy_name`, `is_virtual_copy`, Master
+  identity, and the Master's complete Virtual Copy identity list. The helper
+  reads only official SDK metadata keys (`uuid`, `isVirtualCopy`,
+  `masterPhoto`, `virtualCopies`, `countVirtualCopies`, and formatted
+  `copyName`). `PhotoLookup` now rejects path identifiers and duplicate local
+  catalog IDs instead of guessing.
+- Fallback Lua spec runner verification (the repository's official Busted
+  runner is unavailable in this environment): all 12 plugin spec files passed,
+  `RESULT: 127 passed, 0 failed`.
+- Targeted TypeScript integration verification:
+  `npm test -- --runInBand server/tests/list-tools-handler.test.ts
+  server/tests/server.test.ts` passed 2 suites and 69/69 tests.
+- `npm run check` passed after the identity contract and handler changes.
+- `luac.exe -p` passed for all 10 changed Lua source/spec files.
+- `selene.exe` over the 10 changed Lua source/spec files failed with 189
+  pre-existing-style spec-environment diagnostics (`describe`, `it`, Busted
+  assertions, and helper globals are not declared by the repository's Selene
+  config) plus 3 warnings; this is a lint limitation rather than a parse
+  failure. A source-only lint run is recorded next.
+- Source-only `selene.exe` lint for the five changed plugin modules passed:
+  `0 errors, 0 warnings, 0 parse errors`.
+- Server `npm run lint` passed (`eslint src tests`).
+- Server `npm run build` passed (`tsc`).
+- Server `npm test -- --runInBand` passed: 13 suites, 162 tests.
+- `git diff --check` passed; Git emitted only expected LF-to-CRLF normalization
+  warnings for modified text files.
+- Tightened the remaining singular MCP photo selectors (`copy_develop_settings`
+  source and `set_develop_settings` photo) to reuse the non-empty numeric
+  catalog-ID schema; targeted `npm test -- --runInBand
+  server/tests/list-tools-handler.test.ts` passed 56/56.
+- Final server `npm run check` passed (`tsc --noEmit` and test-config typecheck).
+- Final server `npm run lint` passed (`eslint src tests`).
+- Final server `npm run build` passed (`tsc`).
+- Final server `npm test -- --runInBand` passed: 13 suites, 162 tests.
+- Final `git diff --check` passed; only expected LF-to-CRLF normalization
+  warnings were emitted.
+- Reviewed the uncommitted diff against base `46d3543` and T01 acceptance:
+  identity output is additive, selectors are catalog-ID-only, duplicate IDs
+  fail closed, and the existing `PluginInfoProvider` dispatch mapping remains
+  intact. No unresolved in-scope spec gap was found; no real Lightroom/live
+  evidence is available in this environment.
+- Finalization plan: stage only the T01 files listed by `git status`, run
+  cached diff checks, and commit with a message referencing issue #2 on
+  `codex/roadmap-t01`.
+- Initial `git add` failed before staging because Git could not create the
+  worktree index lock under the shared repository metadata:
+  `Permission denied` for
+  `D:/photo/lightroom-mcp-john/.git/worktrees/lightroom-mcp-t01/index.lock`.
+- Escalated `git add` succeeded for the scoped T01 files. `git diff --cached
+  --check` passed with no whitespace errors.
+- `git commit -m "feat: expose stable Lightroom photo identity (#2)"`
+  succeeded as `a5d6121`. The final append-only worklog entry will be folded
+  into this same commit with `git commit --amend --no-edit`; no additional
+  source changes are planned.

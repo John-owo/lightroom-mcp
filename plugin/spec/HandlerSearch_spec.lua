@@ -42,6 +42,31 @@ describe("HandlerSearch.searchPhotos", function()
         assert.are.equal("portrait.jpg", result.photos[1].filename)
     end)
 
+    it("returns persistent identity for each matching photo", function()
+        local photo = helper.fakePhoto({
+            id = "4",
+            uuid = "uuid-4",
+            path = "/相片/街景.jpg",
+            fileName = "街景.jpg",
+            copyName = "原始版本",
+            isVirtualCopy = false,
+        })
+        local catalog = helper.fakeCatalog({ photos = { photo } })
+        helper.installImport({
+            LrApplication = { activeCatalog = function() return catalog end },
+            LrLogger = helper.defaultLrLogger(),
+        })
+        package.loaded.HandlerSearch = nil
+        Handler = require 'HandlerSearch'
+
+        local result = Handler.searchPhotos({ filename = "街景" })
+        local identity = result.photos[1]
+        assert.are.equal("4", identity.catalog_id)
+        assert.are.equal("uuid-4", identity.uuid)
+        assert.are.equal("街景.jpg", identity.filename)
+        assert.is_false(identity.is_virtual_copy)
+    end)
+
     it("filters by date range", function()
         local result = Handler.searchPhotos({ start_date = "2024-06-02", end_date = "2024-06-02" })
         assert.are.equal(1, result.count)

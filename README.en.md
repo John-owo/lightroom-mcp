@@ -176,7 +176,7 @@ If you'd rather drop the plugin in by hand:
 | --- | --- |
 | `search_photos` | Search by filename / keywords / rating / date range. |
 | `get_selected_photos` | Photos selected in Lightroom (or filmstrip). |
-| `get_photo_metadata` | EXIF, GPS, IPTC location, copyright + develop settings for one photo. |
+| `get_photo_metadata` | Stable catalog ID/UUID, Master and Virtual Copy relationships, EXIF, GPS, IPTC location, copyright + develop settings for one catalog photo. Source paths are display-only and cannot be used as photo selectors. |
 | `list_collections` | All collections and collection sets. |
 | `create_collection` | New collection (optional parent set). |
 | `add_to_collection` | Add photos to a named collection. |

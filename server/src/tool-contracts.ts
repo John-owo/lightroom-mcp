@@ -2,7 +2,64 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 type InputSchema = Tool["inputSchema"];
 
+export const OPERATION_SEMANTICS_META_KEY =
+  "com.john-owo/lightroom-mcp/operation-semantics";
+
+export type OperationSideEffect =
+  | "read_only"
+  | "temporary"
+  | "mutating"
+  | "delivery_export";
+export type OperationReversibility =
+  | "true_undo"
+  | "checkpoint_only"
+  | "new_file"
+  | "irreversible";
+export type OperationScope =
+  | "photo"
+  | "selection"
+  | "catalog"
+  | "filesystem"
+  | "session";
+export type OperationConcurrency =
+  | "parallel_safe"
+  | "per_photo_serialized"
+  | "exclusive_backend";
+export type OperationRetryPolicy =
+  | "automatic"
+  | "readback_before_retry"
+  | "manual_review_only";
+/**
+ * Stable safety metadata for one Lightroom operation.
+ *
+ * These fields are intentionally snake_case: they are part of the public MCP
+ * extension payload and mirror the operation-semantics vocabulary used by the
+ * workflow/orchestrator contract. They are hints for callers, not a substitute
+ * for backend readback or the plugin's serialized dispatch queue.
+ */
+export interface OperationSemantics {
+  supported: boolean;
+  side_effect: OperationSideEffect;
+  idempotent: boolean;
+  reversible: OperationReversibility;
+  scope: OperationScope;
+  requires_active_selection: boolean;
+  requires_editor_foreground: boolean;
+  concurrency: OperationConcurrency;
+  retry_policy: OperationRetryPolicy;
+  safe_to_resume: boolean;
+}
+
 export interface ToolContract {
+  name: string;
+  description: string;
+  luaHandler: string;
+  inputSchema: InputSchema;
+  outputSchema?: Tool["outputSchema"];
+  operationSemantics: OperationSemantics;
+}
+
+interface ToolContractDefinition {
   name: string;
   description: string;
   luaHandler: string;
@@ -206,7 +263,7 @@ const presetSelectorSchema: InputSchema = {
   anyOf: [{ required: ["preset_uuid"] }, { required: ["preset_name"] }],
 };
 
-export const TOOL_CONTRACTS: ToolContract[] = [
+const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
   {
     name: "search_photos",
     luaHandler: "HandlerSearch.searchPhotos",
@@ -541,3 +598,120 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     },
   },
 ];
+
+const readOnlySemantics = (
+  scope: OperationScope,
+  overrides: Partial<OperationSemantics> = {},
+): OperationSemantics => ({
+  supported: true,
+  side_effect: "read_only",
+  idempotent: true,
+  reversible: "true_undo",
+  scope,
+  requires_active_selection: false,
+  requires_editor_foreground: false,
+  concurrency: "parallel_safe",
+  retry_policy: "automatic",
+  safe_to_resume: true,
+  ...overrides,
+});
+
+const mutatingSemantics = (
+  scope: OperationScope,
+  overrides: Partial<OperationSemantics> = {},
+): OperationSemantics => ({
+  supported: true,
+  side_effect: "mutating",
+  idempotent: false,
+  reversible: "irreversible",
+  scope,
+  requires_active_selection: false,
+  requires_editor_foreground: false,
+  concurrency: "exclusive_backend",
+  retry_policy: "manual_review_only",
+  safe_to_resume: false,
+  ...overrides,
+});
+
+const deliverySemantics = (
+  scope: OperationScope,
+  overrides: Partial<OperationSemantics> = {},
+): OperationSemantics => ({
+  supported: true,
+  side_effect: "delivery_export",
+  idempotent: false,
+  reversible: "new_file",
+  scope,
+  requires_active_selection: false,
+  requires_editor_foreground: false,
+  concurrency: "exclusive_backend",
+  retry_policy: "readback_before_retry",
+  safe_to_resume: false,
+  ...overrides,
+});
+
+/**
+ * Operation semantics are keyed separately from the input schemas so adding a
+ * safety constraint cannot accidentally loosen argument validation. The
+ * public `TOOL_CONTRACTS` export below joins the two contract layers and fails
+ * fast if a newly-added tool forgets to declare its execution semantics.
+ */
+export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> = {
+  search_photos: readOnlySemantics("catalog"),
+  get_selected_photos: readOnlySemantics("selection", {
+    requires_active_selection: true,
+    concurrency: "exclusive_backend",
+    retry_policy: "readback_before_retry",
+    safe_to_resume: true,
+  }),
+  get_photo_metadata: readOnlySemantics("photo"),
+  list_collections: readOnlySemantics("catalog"),
+  create_collection: mutatingSemantics("catalog"),
+  add_to_collection: mutatingSemantics("catalog", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  set_keywords: mutatingSemantics("photo", {
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  set_rating: mutatingSemantics("photo", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  import_photos: mutatingSemantics("catalog"),
+  export_photos: deliverySemantics("filesystem"),
+  list_develop_presets: readOnlySemantics("catalog"),
+  get_develop_preset: readOnlySemantics("catalog"),
+  compare_develop_presets: readOnlySemantics("catalog"),
+  create_develop_preset: mutatingSemantics("filesystem"),
+  export_develop_preset: deliverySemantics("filesystem", {
+    concurrency: "parallel_safe",
+  }),
+  apply_develop_preset: mutatingSemantics("photo", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  copy_develop_settings: mutatingSemantics("photo", {
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  set_develop_settings: mutatingSemantics("photo", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+};
+
+export const TOOL_CONTRACTS: ToolContract[] = TOOL_CONTRACT_DEFINITIONS.map(
+  (contract) => {
+    const operationSemantics = OPERATION_SEMANTICS[contract.name];
+    if (!operationSemantics) {
+      throw new Error(`Missing operation semantics for tool: ${contract.name}`);
+    }
+    return { ...contract, operationSemantics };
+  },
+);

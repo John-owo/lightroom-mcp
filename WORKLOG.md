@@ -257,3 +257,98 @@ Unverified boundaries:
   worktree was clean and no commit remained pending at that verification.
 - Worklog-only correction `git diff --check` passed; Git emitted only the
   expected LF-to-CRLF normalization warning.
+
+## 2026-08-27 - T02 serialization investigation
+
+- Started on branch `codex/roadmap-t02` in the dedicated T02 worktree. Read
+  `AGENTS.md`, `CLAUDE.md`, and this work log before inspecting code. Existing
+  working tree was clean; no unrelated edits were present.
+- Read the implement and TDD skill instructions. The agreed seams are the
+  server request-dispatch boundary and the public operation-semantics contract;
+  tests will observe those interfaces rather than private queue helpers.
+- GitHub issue/repository inspection was attempted with `gh issue view` for
+  `John-owo/lightroom-mcp#3`, the parent repository issue, and issue listing;
+  all failed before request creation because the sandbox denied the GitHub API
+  socket. Direct web fetches of the same GitHub URLs also returned cache-miss
+  errors. No GitHub/live-Lightroom evidence is claimed; implementation scope
+  follows the delegated #3 acceptance criteria and local architecture.
+- Targeted local inspection found the current `Dispatcher` sends every call
+  immediately while the Lua `PluginInfoProvider` dispatches each request in a
+  new async task, so serialized ownership and contract exposure are not yet
+  present.
+- Added the first red TDD slice at the plugin request-dispatch boundary: two
+  authenticated requests must share one queued worker, preserve arrival order,
+  and finalize in-flight bookkeeping.
+- Verification attempt `mise run lua:test -- plugin/spec/PluginInfoProvider_spec.lua`
+  could not start because `mise` is not available in this environment; no Lua
+  test result is claimed yet.
+- The delegated mise runtime was then invoked explicitly after trusting the
+  worktree config, but `mise run lua:test -- plugin/spec/PluginInfoProvider_spec.lua`
+  failed while trying to resolve/install missing Lua, Node, Bun, and Selene
+  tools because network access and the user mise install directory were denied.
+- Added the second red TDD slice at the MCP `tools/list` boundary: every tool
+  must expose `concurrency` and `retry_policy` metadata, with
+  `get_selected_photos` requiring exclusive backend ownership and active
+  selection. `npm.cmd test -- --runInBand tests/list-tools-handler.test.ts`
+  failed as expected: 55 tests passed and the new semantics test failed because
+  current tool definitions have no metadata.
+- Added a typed operation-semantics contract to every existing tool and expose
+  it through the MCP tool `_meta` extension. The public payload includes side
+  effect, idempotency, reversibility, scope, selection/foreground requirements,
+  concurrency, retry policy, and resume safety. Selection reads are marked
+  `exclusive_backend` with active-selection/readback constraints; mutating
+  Lightroom operations default to exclusive/manual-review semantics.
+- Verification `npm.cmd test -- --runInBand tests/list-tools-handler.test.ts`
+  passed: 1 suite and 56 tests.
+- Reconciled the public operation-semantics payload with PhotoAgent's canonical
+  `OperationSemanticsSchema`: added `supported`, used boolean `safe_to_resume`,
+  and canonicalized reversibility/scope values. Retained the roadmap's
+  Lightroom-specific active-selection and foreground hints as additive fields.
+- Verification `npm.cmd test -- --runInBand tests/list-tools-handler.test.ts`
+  passed after the contract alignment: 1 suite and 56 tests.
+- Verification used the prepared fallback Lua spec runner (not official
+  Busted): `lua-spec-runner.lua plugin/spec/PluginInfoProvider_spec.lua`
+  passed 20 specs, including both serialized dispatch and response-finalization
+  cases. No real Lightroom mutation or live evidence was used.
+- Verification `npm.cmd run check` from `server`: passed TypeScript source and
+  test-config checks.
+- Verification `npm.cmd run lint` from `server`: passed ESLint for `src` and
+  `tests`.
+- Verification `npm.cmd run build` from `server`: passed TypeScript build.
+- Verification `npm.cmd test -- --runInBand` from `server`: passed 13 suites and
+  161 tests.
+- Verification with Lua 5.4.6 `luac -p` for `PluginInfoProvider.lua` and its
+  spec, followed by Selene 0.31.0 on `plugin/LightroomMCP.lrplugin`: passed;
+  Selene reported 0 errors, 0 warnings, and 0 parse errors.
+- Review checkpoint: inspected the complete `git diff HEAD` against the T02
+  acceptance criteria and local AGENTS/CLAUDE conventions. Queue ownership,
+  handler/response error finalization, dispatch parity, and public concurrency
+  plus retry metadata are covered. No standards violation was found. The
+  repository has no `docs/agents/issue-tracker.md`, and live GitHub issue data
+  remains unverified because the environment denied the GitHub socket.
+- Added a handler-exception queue test so a failed Lightroom handler also
+  finalizes in-flight state and allows the following request to run.
+- Verification fallback Lua runner passed 21 specs, including handler-error
+  and response-send-error continuation cases. `luac -p` for the plugin/spec,
+  Selene 0.31.0, and `git diff --check` all passed (only normal CRLF
+  normalization warnings were emitted by Git).
+- Final pre-commit `git diff --check`, `git status --short --branch`, and
+  `git diff --stat` passed; only the six intended T02 files are modified on
+  `codex/roadmap-t02`.
+- Next command is the scoped commit `git add` for those six files followed by
+  `git commit -m "feat(plugin): serialize requests and publish semantics (#3)"`.
+- Commit attempt failed before staging: `git add -- <six T02 files>; git commit
+  -m "feat(plugin): serialize requests and publish semantics (#3)"` could not
+  create the linked worktree index lock at
+  `D:/photo/lightroom-mcp-john/.git/worktrees/lightroom-mcp-t02/index.lock`
+  (`Permission denied`). No commit was created; inspect the lock/ACL/process
+  state before retrying and do not remove another worktree's lock blindly.
+- Retried the exact scoped add/commit with the approved elevated Git operation;
+  commit succeeded as `6fa0b7d` (`feat(plugin): serialize requests and publish
+  semantics (#3)`). Git emitted only normal LF-to-CRLF normalization warnings.
+- The following amend records this successful commit result in the append-only
+  work log itself: `git add -- WORKLOG.md; git commit --amend --no-edit`.
+- Post-amend `git status --short --branch`, `git log -1 --oneline --decorate`,
+  and `git diff --check --cached` passed: branch `codex/roadmap-t02` was clean,
+  HEAD was `c7dbca2`, and the index had no whitespace errors. The final amend
+  below only records this verification in the work log.

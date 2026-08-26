@@ -390,3 +390,163 @@ describe("heartbeat / stale-connection blast radius (PR #151 review)", function(
         end)
     end)
 end)
+
+describe("serialized request dispatch", function()
+    local realOpen
+
+    before_each(function()
+        _G.LightroomMCP_State = nil
+        realOpen = io.open
+        io.open = function(path, mode, ...)
+            if mode and mode:find("w", 1, true) then
+                return { write = function() end, close = function() end }
+            end
+            return realOpen(path, mode, ...)
+        end
+    end)
+
+    after_each(function()
+        io.open = realOpen
+    end)
+
+    it("runs requests in arrival order through one queued task", function()
+        local tasks = {}
+        local binds = {}
+        local order = {}
+        local responses = {}
+        installStubs(nil, tasks, {
+            runTask = true,
+            stopLoopOnSleep = true,
+            cleanups = {},
+            capturedBinds = binds,
+        })
+        package.loaded.JSON = nil
+        package.loaded.HandlerCollections = {
+            listCollections = function(args)
+                table.insert(order, args.sequence)
+                return { sequence = args.sequence }
+            end,
+        }
+        local mod = loadInfoProvider()
+
+        mod.startServer()
+        local state = _G.LightroomMCP_State
+        state.sendConnected = true
+        state.responseSocket = {
+            send = function(_, payload)
+                table.insert(responses, payload)
+            end,
+        }
+
+        local requestBind = binds[1]
+        local function request(id, sequence)
+            return '{"id":"' .. id .. '","action":"list_collections",' ..
+                '"params":{"sequence":' .. sequence .. '},' ..
+                '"hello":"' .. state.token .. '"}'
+        end
+        requestBind.onMessage(nil, request("first", 1))
+        requestBind.onMessage(nil, request("second", 2))
+
+        assert.are.equal(1, #tasks)
+        tasks[1]()
+
+        assert.are.same({ 1, 2 }, order)
+        assert.are.equal(2, #responses)
+        assert.are.equal(0, state.inFlightRequests)
+    end)
+
+    it("finalizes a failed response and continues with the next request", function()
+        local tasks = {}
+        local binds = {}
+        local order = {}
+        local sendCount = 0
+        installStubs(nil, tasks, {
+            runTask = true,
+            stopLoopOnSleep = true,
+            cleanups = {},
+            capturedBinds = binds,
+        })
+        package.loaded.JSON = nil
+        package.loaded.HandlerCollections = {
+            listCollections = function(args)
+                table.insert(order, args.sequence)
+                return { sequence = args.sequence }
+            end,
+        }
+        local mod = loadInfoProvider()
+
+        mod.startServer()
+        local state = _G.LightroomMCP_State
+        state.sendConnected = true
+        state.responseSocket = {
+            send = function()
+                sendCount = sendCount + 1
+                if sendCount == 1 then error("response unavailable") end
+            end,
+        }
+
+        local requestBind = binds[1]
+        local function request(id, sequence)
+            return '{"id":"' .. id .. '","action":"list_collections",' ..
+                '"params":{"sequence":' .. sequence .. '},' ..
+                '"hello":"' .. state.token .. '"}'
+        end
+        requestBind.onMessage(nil, request("first", 1))
+        requestBind.onMessage(nil, request("second", 2))
+
+        assert.are.equal(1, #tasks)
+        tasks[1]()
+
+        assert.are.same({ 1, 2 }, order)
+        assert.is_false(state.queueRunning)
+        assert.are.equal(0, state.inFlightRequests)
+    end)
+
+    it("finalizes a handler error and continues with the next request", function()
+        local tasks = {}
+        local binds = {}
+        local responses = {}
+        local callCount = 0
+        installStubs(nil, tasks, {
+            runTask = true,
+            stopLoopOnSleep = true,
+            cleanups = {},
+            capturedBinds = binds,
+        })
+        package.loaded.JSON = nil
+        package.loaded.HandlerCollections = {
+            listCollections = function(args)
+                callCount = callCount + 1
+                if callCount == 1 then error("catalog unavailable") end
+                return { sequence = args.sequence }
+            end,
+        }
+        local mod = loadInfoProvider()
+
+        mod.startServer()
+        local state = _G.LightroomMCP_State
+        state.sendConnected = true
+        state.responseSocket = {
+            send = function(_, payload)
+                table.insert(responses, payload)
+            end,
+        }
+
+        local requestBind = binds[1]
+        local function request(id, sequence)
+            return '{"id":"' .. id .. '","action":"list_collections",' ..
+                '"params":{"sequence":' .. sequence .. '},' ..
+                '"hello":"' .. state.token .. '"}'
+        end
+        requestBind.onMessage(nil, request("first", 1))
+        requestBind.onMessage(nil, request("second", 2))
+
+        assert.are.equal(1, #tasks)
+        tasks[1]()
+
+        assert.are.equal(2, callCount)
+        assert.are.equal(2, #responses)
+        assert.is_false(state.queueRunning)
+        assert.are.equal(0, state.inFlightRequests)
+    end)
+end)

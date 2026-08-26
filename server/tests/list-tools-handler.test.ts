@@ -5,6 +5,7 @@ import { TOOL_DEFINITIONS, listToolsHandler } from '../src/list-tools-handler.js
 import {
   DEVELOP_CURVE_SETTING_KEYS,
   DEVELOP_SETTING_KEYS,
+  OPERATION_SEMANTICS_META_KEY,
   TOOL_CONTRACTS,
 } from '../src/tool-contracts.js';
 
@@ -54,11 +55,14 @@ describe('TOOL_DEFINITIONS', () => {
 
   it('is generated from tool contracts', () => {
     expect(TOOL_DEFINITIONS).toEqual(
-      TOOL_CONTRACTS.map(({ name, description, inputSchema, outputSchema }) => ({
+      TOOL_CONTRACTS.map(({ name, description, inputSchema, outputSchema, operationSemantics }) => ({
         name,
         description,
         inputSchema,
         ...(outputSchema ? { outputSchema } : {}),
+        _meta: {
+          [OPERATION_SEMANTICS_META_KEY]: operationSemantics,
+        },
       })),
     );
   });
@@ -279,5 +283,35 @@ describe('tool contracts vs Lua dispatch', () => {
     );
 
     expect(dispatch).toEqual(manifest);
+  });
+});
+
+describe('MCP operation semantics', () => {
+  const semanticsKey = OPERATION_SEMANTICS_META_KEY;
+
+  it('exposes the canonical operation semantics contract for every tool', () => {
+    for (const tool of TOOL_DEFINITIONS) {
+      const metadata = tool._meta as Record<string, unknown> | undefined;
+      const semantics = metadata?.[semanticsKey] as Record<string, unknown> | undefined;
+
+      expect(semantics).toMatchObject({
+        supported: true,
+        side_effect: expect.any(String),
+        idempotent: expect.any(Boolean),
+        reversible: expect.any(String),
+        scope: expect.any(String),
+        concurrency: expect.any(String),
+        retry_policy: expect.any(String),
+        safe_to_resume: expect.any(Boolean),
+      });
+    }
+
+    const selectedPhotos = TOOL_DEFINITIONS.find((tool) => tool.name === 'get_selected_photos');
+    const selectedMetadata = selectedPhotos?._meta as Record<string, unknown> | undefined;
+    expect(selectedMetadata?.[semanticsKey]).toMatchObject({
+      concurrency: 'exclusive_backend',
+      retry_policy: 'readback_before_retry',
+      requires_active_selection: true,
+    });
   });
 });

@@ -69,10 +69,16 @@ if not _G.LightroomMCP_State then
         needsFullRestart = false,
         freshRestart = false,
         inFlightRequests = 0,
+        requestQueue = {},
+        queueRunning = false,
     }
 end
 
 local pluginState = _G.LightroomMCP_State
+-- A running session can survive InfoProvider re-evaluation. Backfill queue
+-- fields when an older state table predates the serialization gate.
+pluginState.requestQueue = pluginState.requestQueue or {}
+pluginState.queueRunning = pluginState.queueRunning or false
 
 local function tokenDir()
     return LrPathUtils.child(LrPathUtils.getStandardFilePath("home"), ".config")
@@ -234,10 +240,27 @@ local function dispatchAction(request)
     -- is still queued waiting on sendConnected (see STALE_RESTART_HARD_CAP_SECONDS).
     pluginState.inFlightRequests = (pluginState.inFlightRequests or 0) + 1
 
+    -- A socket write can fail after the handler has completed. Treat response
+    -- delivery as part of request finalization so one broken response cannot
+    -- strand the queue worker or leave the stale-connection guard thinking a
+    -- request is still active.
+    local function sendResponseSafely(response)
+        local ok, err = LrTasks.pcall(function()
+            sendResponse(response)
+        end)
+        if not ok then
+            addLog("Response send error id=" .. tostring(id) .. ": " .. tostring(err))
+        end
+    end
+
+    local function finalizeRequest()
+        pluginState.inFlightRequests = math.max(0, pluginState.inFlightRequests - 1)
+    end
+
     local handler = DISPATCH[action]
     if not handler then
-        sendResponse({ id = id, error = "Unknown action: " .. tostring(action) })
-        pluginState.inFlightRequests = math.max(0, pluginState.inFlightRequests - 1)
+        sendResponseSafely({ id = id, error = "Unknown action: " .. tostring(action) })
+        finalizeRequest()
         return
     end
 
@@ -249,12 +272,50 @@ local function dispatchAction(request)
         return handler(params)
     end)
     if execOk then
-        sendResponse({ id = id, result = resultOrErr })
+        sendResponseSafely({ id = id, result = resultOrErr })
     else
         addLog("Handler " .. action .. " error: " .. tostring(resultOrErr))
-        sendResponse({ id = id, error = tostring(resultOrErr) })
+        sendResponseSafely({ id = id, error = tostring(resultOrErr) })
     end
-    pluginState.inFlightRequests = math.max(0, pluginState.inFlightRequests - 1)
+    finalizeRequest()
+end
+
+-- Lightroom selection and catalog state are process-wide.  Starting one
+-- async task per socket message lets two handlers observe or mutate that
+-- state at the same time, even though the socket itself has one client. Keep
+-- one worker for the whole plugin and let it drain requests in arrival order.
+-- The worker owns the request until dispatchAction has sent (or deliberately
+-- dropped) its response, so a later request cannot observe a temporary state
+-- left by an earlier one.
+local function runRequestQueue()
+    while #pluginState.requestQueue > 0 do
+        local request = table.remove(pluginState.requestQueue, 1)
+        local ok, err = LrTasks.pcall(function()
+            dispatchAction(request)
+        end)
+        if not ok then
+            -- Keep draining after an unexpected dispatch error. Handler and
+            -- response errors are finalized inside dispatchAction; this is a
+            -- last-resort guard for malformed requests or SDK surprises that
+            -- escape those paths.
+            addLog("Dispatch error id=" .. tostring(request.id) .. ": " .. tostring(err))
+            pluginState.inFlightRequests = math.max(0, pluginState.inFlightRequests - 1)
+            local responseOk, responseErr = LrTasks.pcall(function()
+                sendResponse({ id = request.id, error = tostring(err) })
+            end)
+            if not responseOk then
+                addLog("Dispatch error response failed id=" .. tostring(request.id) .. ": " .. tostring(responseErr))
+            end
+        end
+    end
+    pluginState.queueRunning = false
+end
+
+local function enqueueRequest(request)
+    table.insert(pluginState.requestQueue, request)
+    if pluginState.queueRunning then return end
+    pluginState.queueRunning = true
+    LrTasks.startAsyncTask(runRequestQueue)
 end
 
 -- Runs SYNCHRONOUSLY in onMessage. Every request must carry the current
@@ -378,9 +439,7 @@ local function startServer()
                 onMessage = function(_, message)
                     local request = consumeMessage(message)
                     if request then
-                        LrTasks.startAsyncTask(function()
-                            dispatchAction(request)
-                        end)
+                        enqueueRequest(request)
                     end
                 end,
                 onClosed = function()
@@ -595,6 +654,8 @@ local function resetForReload()
     pluginState.needsFullRestart = false
     pluginState.freshRestart = false
     pluginState.inFlightRequests = 0
+    pluginState.requestQueue = {}
+    pluginState.queueRunning = false
 end
 
 addLog("PluginInfoProvider loaded")

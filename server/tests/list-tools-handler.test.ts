@@ -5,6 +5,7 @@ import { TOOL_DEFINITIONS, listToolsHandler } from '../src/list-tools-handler.js
 import {
   DEVELOP_CURVE_SETTING_KEYS,
   DEVELOP_SETTING_KEYS,
+  OPERATION_SEMANTICS,
   OPERATION_SEMANTICS_META_KEY,
   TOOL_CONTRACTS,
 } from '../src/tool-contracts.js';
@@ -289,6 +290,19 @@ describe('tool contracts vs Lua dispatch', () => {
 describe('MCP operation semantics', () => {
   const semanticsKey = OPERATION_SEMANTICS_META_KEY;
 
+  it('uses a valid reverse-DNS MCP metadata key with one slash', () => {
+    expect(semanticsKey).toMatch(
+      /^[a-z0-9-]+(?:\.[a-z0-9-]+)+\/[a-z0-9][a-z0-9._-]*$/,
+    );
+    expect(semanticsKey.split('/')).toHaveLength(2);
+  });
+
+  it('keeps contract and semantics keys in both directions', () => {
+    expect(Object.keys(OPERATION_SEMANTICS).sort()).toEqual(
+      TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    );
+  });
+
   it('exposes the canonical operation semantics contract for every tool', () => {
     for (const tool of TOOL_DEFINITIONS) {
       const metadata = tool._meta as Record<string, unknown> | undefined;
@@ -311,7 +325,7 @@ describe('MCP operation semantics', () => {
     expect(selectedMetadata?.[semanticsKey]).toMatchObject({
       concurrency: 'exclusive_backend',
       retry_policy: 'readback_before_retry',
-      requires_active_selection: true,
+      requires_active_selection: false,
     });
   });
 });

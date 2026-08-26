@@ -19,11 +19,14 @@ local HANDLER_MODULES = {
 --   capturedBinds  -- array; each LrSocket.bind opts table is appended, in
 --                      bind order (request socket first, then response), so
 --                      a test can invoke onConnected/onMessage/etc directly
+--   startTaskError -- make LrTasks.startAsyncTask raise the supplied error
+--   postTaskError -- make LrFunctionContext.postAsyncTaskWithContext raise
 local function installStubs(prefs, asyncTasks, opts)
     opts = opts or {}
     helper.installImport({
         LrTasks = {
             startAsyncTask = function(fn)
+                if opts.startTaskError then error(opts.startTaskError) end
                 if asyncTasks then
                     table.insert(asyncTasks, fn)
                 else
@@ -41,6 +44,7 @@ local function installStubs(prefs, asyncTasks, opts)
         LrDialogs = { message = function() end },
         LrFunctionContext = {
             postAsyncTaskWithContext = function(_, fn)
+                if opts.postTaskError then error(opts.postTaskError) end
                 if not opts.runTask then return end
                 local context = {
                     addCleanupHandler = function(_, handler)
@@ -314,6 +318,7 @@ describe("stale-connection follow-up fixes (PR #151 re-review)", function()
 
         mod.startServer()
         local state = _G.LightroomMCP_State
+        state.running = true
         state.sendConnected = true
         state.responseSocket = {
             send = function()
@@ -431,6 +436,7 @@ describe("serialized request dispatch", function()
 
         mod.startServer()
         local state = _G.LightroomMCP_State
+        state.running = true
         state.sendConnected = true
         state.responseSocket = {
             send = function(_, payload)
@@ -477,6 +483,7 @@ describe("serialized request dispatch", function()
 
         mod.startServer()
         local state = _G.LightroomMCP_State
+        state.running = true
         state.sendConnected = true
         state.responseSocket = {
             send = function()
@@ -525,6 +532,7 @@ describe("serialized request dispatch", function()
 
         mod.startServer()
         local state = _G.LightroomMCP_State
+        state.running = true
         state.sendConnected = true
         state.responseSocket = {
             send = function(_, payload)
@@ -548,5 +556,162 @@ describe("serialized request dispatch", function()
         assert.are.equal(2, #responses)
         assert.is_false(state.queueRunning)
         assert.are.equal(0, state.inFlightRequests)
+    end)
+
+    it("does not overlap a stopped worker with a new server generation", function()
+        local tasks = {}
+        local binds = {}
+        local calls = {}
+        local mod
+        installStubs(nil, tasks, {
+            runTask = true,
+            stopLoopOnSleep = true,
+            cleanups = {},
+            capturedBinds = binds,
+        })
+        package.loaded.JSON = nil
+        package.loaded.HandlerCollections = {
+            listCollections = function(args)
+                table.insert(calls, args.sequence)
+                if args.sequence == 1 then
+                    mod.stopServer()
+                    mod.startServer()
+                    local state = _G.LightroomMCP_State
+                    state.running = true
+                    state.sendConnected = true
+                    state.responseSocket = { send = function() end }
+                    local newRequestBind = binds[3]
+                    newRequestBind.onMessage(nil, '{"id":"fresh","action":"list_collections",' ..
+                        '"params":{"sequence":3},"hello":"' .. state.token .. '"}')
+                end
+                return { sequence = args.sequence }
+            end,
+        }
+        mod = loadInfoProvider()
+
+        mod.startServer()
+        local state = _G.LightroomMCP_State
+        state.running = true
+        state.sendConnected = true
+        state.responseSocket = { send = function() end }
+        local requestBind = binds[1]
+        local function request(id, sequence)
+            return '{"id":"' .. id .. '","action":"list_collections",' ..
+                '"params":{"sequence":' .. sequence .. '},' ..
+                '"hello":"' .. state.token .. '"}'
+        end
+        requestBind.onMessage(nil, request("old", 1))
+        requestBind.onMessage(nil, request("stale", 2))
+
+        assert.are.equal(1, #tasks)
+        tasks[1]()
+        assert.are.same({ 1 }, calls)
+        assert.are.equal(2, #tasks)
+        assert.is_true(state.queueRunning)
+        tasks[2]()
+
+        assert.are.same({ 1, 3 }, calls)
+        assert.is_false(state.queueRunning)
+        assert.are.equal(0, state.inFlightRequests)
+    end)
+
+    it("waits for an old reset worker to finish before draining the new generation", function()
+        local tasks = {}
+        local binds = {}
+        local calls = {}
+        local mod
+        installStubs(nil, tasks, {
+            runTask = true,
+            stopLoopOnSleep = true,
+            cleanups = {},
+            capturedBinds = binds,
+        })
+        package.loaded.JSON = nil
+        package.loaded.HandlerCollections = {
+            listCollections = function(args)
+                table.insert(calls, args.sequence)
+                if args.sequence == 1 then
+                    mod.resetForReload()
+                    mod.startServer()
+                    local state = _G.LightroomMCP_State
+                    state.running = true
+                    state.sendConnected = true
+                    state.responseSocket = { send = function() end }
+                    local newRequestBind = binds[3]
+                    newRequestBind.onMessage(nil, '{"id":"fresh","action":"list_collections",' ..
+                        '"params":{"sequence":3},"hello":"' .. state.token .. '"}')
+                    error("old generation failed")
+                end
+                return { sequence = args.sequence }
+            end,
+        }
+        mod = loadInfoProvider()
+
+        mod.startServer()
+        local state = _G.LightroomMCP_State
+        state.running = true
+        state.sendConnected = true
+        state.responseSocket = { send = function() end }
+        local requestBind = binds[1]
+        requestBind.onMessage(nil, '{"id":"old","action":"list_collections",' ..
+            '"params":{"sequence":1},"hello":"' .. state.token .. '"}')
+
+        assert.are.equal(1, #tasks)
+        tasks[1]()
+        assert.are.same({ 1 }, calls)
+        assert.are.equal(2, #tasks)
+        assert.is_true(state.queueRunning)
+        tasks[2]()
+
+        assert.are.same({ 1, 3 }, calls)
+        assert.is_false(state.queueRunning)
+        assert.are.equal(0, state.inFlightRequests)
+    end)
+
+    it("clears queue ownership when a worker cannot be started", function()
+        local tasks = {}
+        local binds = {}
+        installStubs(nil, tasks, {
+            runTask = true,
+            stopLoopOnSleep = true,
+            startTaskError = "scheduler unavailable",
+            cleanups = {},
+            capturedBinds = binds,
+        })
+        package.loaded.JSON = nil
+        package.loaded.HandlerCollections = {
+            listCollections = function()
+                error("must not dispatch after worker start failure")
+            end,
+        }
+        local mod = loadInfoProvider()
+
+        mod.startServer()
+        local state = _G.LightroomMCP_State
+        state.running = true
+        state.sendConnected = true
+        state.responseSocket = { send = function() end }
+        binds[1].onMessage(nil, '{"id":"failed","action":"list_collections",' ..
+            '"params":{},"hello":"' .. state.token .. '"}')
+
+        assert.are.equal(0, #tasks)
+        assert.is_false(state.queueRunning)
+        assert.is_nil(state.queueWorkerGeneration)
+        assert.is_nil(state.queueWorkerQueue)
+        assert.are.equal(0, #state.requestQueue)
+        assert.are.equal(0, state.inFlightRequests)
+    end)
+
+    it("recovers a failed server task start without accepting a queue", function()
+        installStubs(nil, nil, { postTaskError = "context unavailable" })
+        local mod = loadInfoProvider()
+
+        mod.startServer()
+
+        local state = _G.LightroomMCP_State
+        assert.is_false(state.running)
+        assert.is_false(state.queueAccepting)
+        assert.is_false(state.queueRunning)
+        assert.are.equal(0, #state.requestQueue)
     end)
 end)

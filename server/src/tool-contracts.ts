@@ -3,7 +3,7 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 type InputSchema = Tool["inputSchema"];
 
 export const OPERATION_SEMANTICS_META_KEY =
-  "com.john-owo/lightroom-mcp/operation-semantics";
+  "io.github.john-owo.lightroom-mcp/operation-semantics";
 
 export type OperationSideEffect =
   | "read_only"
@@ -659,7 +659,7 @@ const deliverySemantics = (
 export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> = {
   search_photos: readOnlySemantics("catalog"),
   get_selected_photos: readOnlySemantics("selection", {
-    requires_active_selection: true,
+    requires_active_selection: false,
     concurrency: "exclusive_backend",
     retry_policy: "readback_before_retry",
     safe_to_resume: true,

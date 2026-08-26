@@ -71,6 +71,10 @@ if not _G.LightroomMCP_State then
         inFlightRequests = 0,
         requestQueue = {},
         queueRunning = false,
+        queueGeneration = 0,
+        queueAccepting = false,
+        queueWorkerGeneration = nil,
+        queueWorkerQueue = nil,
     }
 end
 
@@ -79,6 +83,12 @@ local pluginState = _G.LightroomMCP_State
 -- fields when an older state table predates the serialization gate.
 pluginState.requestQueue = pluginState.requestQueue or {}
 pluginState.queueRunning = pluginState.queueRunning or false
+pluginState.queueGeneration = pluginState.queueGeneration or 0
+if pluginState.queueAccepting == nil then
+    -- Preserve a live pre-generation server across InfoProvider re-evaluation;
+    -- old state tables do not have the acceptance flag yet.
+    pluginState.queueAccepting = pluginState.running == true
+end
 
 local function tokenDir()
     return LrPathUtils.child(LrPathUtils.getStandardFilePath("home"), ".config")
@@ -195,10 +205,14 @@ local function shouldRestartForStaleConnection(idle, inFlightRequests, softSecon
     return restart, suffix
 end
 
-local function sendResponse(response)
+local function sendResponse(response, generation)
     local waited = 0
     local selfHealRequested = false
     while not pluginState.sendConnected and waited < SEND_WAIT_SECONDS do
+        if generation and generation ~= pluginState.queueGeneration then
+            addLog("Drop stale response id=" .. tostring(response.id) .. " generation=" .. tostring(generation))
+            return
+        end
         if not selfHealRequested and waited >= SEND_REBIND_TRIGGER_SECONDS then
             addLog("sendResponse stalled " .. SEND_REBIND_TRIGGER_SECONDS .. "s, requesting rebind id=" .. tostring(response.id))
             pluginState.responseNeedsRebind = true
@@ -206,6 +220,10 @@ local function sendResponse(response)
         end
         LrTasks.sleep(0.1)
         waited = waited + 0.1
+    end
+    if generation and generation ~= pluginState.queueGeneration then
+        addLog("Drop stale response id=" .. tostring(response.id) .. " generation=" .. tostring(generation))
+        return
     end
     if not pluginState.responseSocket or not pluginState.sendConnected then
         addLog("Drop response (send socket disconnected after " .. SEND_WAIT_SECONDS .. "s) id=" .. tostring(response.id))
@@ -220,7 +238,7 @@ local function sendResponse(response)
     pluginState.requestsProcessed = pluginState.requestsProcessed + 1
 end
 
-local function dispatchAction(request)
+local function dispatchAction(request, generation)
     local id = request.id
     local action = request.action
     local params = request.params or {}
@@ -245,8 +263,12 @@ local function dispatchAction(request)
     -- strand the queue worker or leave the stale-connection guard thinking a
     -- request is still active.
     local function sendResponseSafely(response)
+        if generation and generation ~= pluginState.queueGeneration then
+            addLog("Drop stale response id=" .. tostring(id) .. " generation=" .. tostring(generation))
+            return
+        end
         local ok, err = LrTasks.pcall(function()
-            sendResponse(response)
+            sendResponse(response, generation)
         end)
         if not ok then
             addLog("Response send error id=" .. tostring(id) .. ": " .. tostring(err))
@@ -280,42 +302,153 @@ local function dispatchAction(request)
     finalizeRequest()
 end
 
--- Lightroom selection and catalog state are process-wide.  Starting one
--- async task per socket message lets two handlers observe or mutate that
--- state at the same time, even though the socket itself has one client. Keep
--- one worker for the whole plugin and let it drain requests in arrival order.
--- The worker owns the request until dispatchAction has sent (or deliberately
--- dropped) its response, so a later request cannot observe a temporary state
--- left by an earlier one.
-local function runRequestQueue()
-    while #pluginState.requestQueue > 0 do
-        local request = table.remove(pluginState.requestQueue, 1)
-        local ok, err = LrTasks.pcall(function()
-            dispatchAction(request)
-        end)
-        if not ok then
-            -- Keep draining after an unexpected dispatch error. Handler and
-            -- response errors are finalized inside dispatchAction; this is a
-            -- last-resort guard for malformed requests or SDK surprises that
-            -- escape those paths.
-            addLog("Dispatch error id=" .. tostring(request.id) .. ": " .. tostring(err))
-            pluginState.inFlightRequests = math.max(0, pluginState.inFlightRequests - 1)
-            local responseOk, responseErr = LrTasks.pcall(function()
-                sendResponse({ id = request.id, error = tostring(err) })
+-- Queue workers capture both their generation and their queue table. A stop,
+-- reload, or restart swaps in a new generation/table but leaves an old worker
+-- marked active until it returns. This prevents an unfinished selection or
+-- catalog mutation from overlapping a newly-started worker.
+local startQueueWorker
+
+local function clearQueue(queue, reason)
+    queue = queue or {}
+    local dropped = #queue
+    for i = dropped, 1, -1 do
+        queue[i] = nil
+    end
+    if dropped > 0 then
+        addLog("Cleared " .. dropped .. " queued request(s): " .. reason)
+    end
+end
+
+local function invalidateQueueGeneration(reason)
+    local oldQueue = pluginState.requestQueue
+    pluginState.queueGeneration = (pluginState.queueGeneration or 0) + 1
+    pluginState.queueAccepting = false
+    pluginState.requestQueue = {}
+    clearQueue(oldQueue, reason)
+    if not pluginState.queueRunning then
+        pluginState.queueWorkerGeneration = nil
+        pluginState.queueWorkerQueue = nil
+        pluginState.inFlightRequests = 0
+    end
+end
+
+local function beginQueueGeneration()
+    local oldQueue = pluginState.requestQueue
+    pluginState.queueGeneration = (pluginState.queueGeneration or 0) + 1
+    pluginState.queueAccepting = false
+    pluginState.requestQueue = {}
+    clearQueue(oldQueue, "new server generation")
+end
+
+local function finalizeQueueWorker(generation, queue)
+    if pluginState.queueWorkerGeneration ~= generation or pluginState.queueWorkerQueue ~= queue then
+        -- A worker that no longer owns the state cannot clear or restart it.
+        return
+    end
+
+    pluginState.queueRunning = false
+    pluginState.queueWorkerGeneration = nil
+    pluginState.queueWorkerQueue = nil
+    if #pluginState.requestQueue == 0 then
+        pluginState.inFlightRequests = 0
+    end
+    if pluginState.running and pluginState.queueAccepting and #pluginState.requestQueue > 0 then
+        startQueueWorker()
+    end
+end
+
+-- Lightroom selection and catalog state are process-wide. Starting one async
+-- task per socket message lets two handlers observe or mutate that state at
+-- the same time. Keep one worker for the whole plugin and let it drain the
+-- captured generation's requests in arrival order.
+local function runRequestQueue(generation, queue)
+    local workerOk, workerErr = LrTasks.pcall(function()
+        while generation == pluginState.queueGeneration and #queue > 0 do
+            local request = table.remove(queue, 1)
+            local requestsBefore = pluginState.inFlightRequests or 0
+            local ok, err = LrTasks.pcall(function()
+                dispatchAction(request, generation)
             end)
-            if not responseOk then
-                addLog("Dispatch error response failed id=" .. tostring(request.id) .. ": " .. tostring(responseErr))
+            if not ok then
+                -- Keep draining after an unexpected dispatch error. Handler
+                -- and response errors are finalized inside dispatchAction;
+                -- this covers malformed requests or SDK surprises that escape
+                -- those paths.
+                addLog("Dispatch error id=" .. tostring(request.id) .. ": " .. tostring(err))
+                if (pluginState.inFlightRequests or 0) > requestsBefore then
+                    pluginState.inFlightRequests = math.max(0, pluginState.inFlightRequests - 1)
+                end
+                if generation == pluginState.queueGeneration then
+                    local responseOk, responseErr = LrTasks.pcall(function()
+                        sendResponse({ id = request.id, error = tostring(err) }, generation)
+                    end)
+                    if not responseOk then
+                        addLog("Dispatch error response failed id=" .. tostring(request.id) .. ": " .. tostring(responseErr))
+                    end
+                end
             end
         end
+        if generation ~= pluginState.queueGeneration then
+            clearQueue(queue, "superseded generation")
+        end
+    end)
+    if not workerOk then
+        addLog("Queue worker error generation=" .. tostring(generation) .. ": " .. tostring(workerErr))
+        clearQueue(queue, "worker error")
     end
-    pluginState.queueRunning = false
+
+    local finalizeOk, finalizeErr = LrTasks.pcall(function()
+        finalizeQueueWorker(generation, queue)
+    end)
+    if not finalizeOk then
+        addLog("Queue finalization error generation=" .. tostring(generation) .. ": " .. tostring(finalizeErr))
+        if pluginState.queueWorkerGeneration == generation and pluginState.queueWorkerQueue == queue then
+            pluginState.queueRunning = false
+            pluginState.queueWorkerGeneration = nil
+            pluginState.queueWorkerQueue = nil
+            pluginState.inFlightRequests = 0
+        end
+    end
+end
+
+startQueueWorker = function()
+    if pluginState.queueRunning or not pluginState.running or not pluginState.queueAccepting then
+        return true
+    end
+    if #pluginState.requestQueue == 0 then return true end
+
+    local generation = pluginState.queueGeneration
+    local queue = pluginState.requestQueue
+    pluginState.queueRunning = true
+    pluginState.queueWorkerGeneration = generation
+    pluginState.queueWorkerQueue = queue
+
+    local ok, err = LrTasks.pcall(function()
+        LrTasks.startAsyncTask(function()
+            runRequestQueue(generation, queue)
+        end)
+    end)
+    if not ok then
+        addLog("Queue worker start error generation=" .. tostring(generation) .. ": " .. tostring(err))
+        if pluginState.queueWorkerGeneration == generation and pluginState.queueWorkerQueue == queue then
+            pluginState.queueRunning = false
+            pluginState.queueWorkerGeneration = nil
+            pluginState.queueWorkerQueue = nil
+            clearQueue(queue, "worker start error")
+            pluginState.inFlightRequests = 0
+        end
+        return false
+    end
+    return true
 end
 
 local function enqueueRequest(request)
+    if not pluginState.running or not pluginState.queueAccepting then
+        addLog("Drop request while queue stopped id=" .. tostring(request.id))
+        return false
+    end
     table.insert(pluginState.requestQueue, request)
-    if pluginState.queueRunning then return end
-    pluginState.queueRunning = true
-    LrTasks.startAsyncTask(runRequestQueue)
+    return startQueueWorker()
 end
 
 -- Runs SYNCHRONOUSLY in onMessage. Every request must carry the current
@@ -356,6 +489,7 @@ local function startServer()
     -- waking in that window would otherwise pass the guard too and bind a
     -- second pair of LrSocket listeners on the same ports.
     pluginState.running = true
+    beginQueueGeneration()
 
     pluginState.token = generateToken()
     if writeTokenFile(pluginState.token) then
@@ -378,7 +512,7 @@ local function startServer()
     local instanceId = pluginState.instanceId
     addLog("Starting LrSocket servers")
 
-    LrFunctionContext.postAsyncTaskWithContext("LightroomMCPServer", function(context)
+    local serverTask = function(context)
         context:addCleanupHandler(function()
             if pluginState.instanceId ~= instanceId then
                 -- A newer startServer superseded this instance; its sockets
@@ -388,6 +522,8 @@ local function startServer()
                 return
             end
             addLog("Server task context cleanup")
+            pluginState.running = false
+            invalidateQueueGeneration("server context cleanup")
             if pluginState.requestSocket then
                 pcall(function() pluginState.requestSocket:close() end)
             end
@@ -567,6 +703,7 @@ local function startServer()
                     -- stopServer() is declared after startServer() in this file
                     -- and is not an upvalue here; inline its effect directly.
                     pluginState.running = false
+                    invalidateQueueGeneration("stale connection restart")
                     LrTasks.sleep(0.5)
                     startServer()
                 end)
@@ -601,16 +738,28 @@ local function startServer()
 
         addLog("Server loop exiting")
         -- Socket cleanup runs in context:addCleanupHandler above.
+    end
+    local startOk, startErr = LrTasks.pcall(function()
+        LrFunctionContext.postAsyncTaskWithContext("LightroomMCPServer", serverTask)
     end)
+    if not startOk then
+        addLog("Server start error: " .. tostring(startErr))
+        pluginState.running = false
+        invalidateQueueGeneration("server start error")
+        return
+    end
+    pluginState.queueAccepting = true
 end
 
 local function stopServer()
     if not pluginState.running then
         addLog("Not running")
+        invalidateQueueGeneration("stop while inactive")
         return
     end
     addLog("Stopping LrSocket servers")
     pluginState.running = false
+    invalidateQueueGeneration("server stopped")
 end
 
 -- Called by PluginInit on plugin load/reload (never on a Plug-in Manager
@@ -622,9 +771,15 @@ end
 -- table) so this module's pluginState and the old loop's closure keep
 -- pointing at the same table — flipping running here is what stops it.
 local function resetForReload()
-    if not pluginState.running then return end
-    addLog("Reload detected - resetting previous server instance")
+    if pluginState.running then
+        addLog("Reload detected - resetting previous server instance")
+    elseif pluginState.queueRunning or #pluginState.requestQueue > 0 then
+        addLog("Reload detected - resetting pending queue state")
+    else
+        return
+    end
     pluginState.running = false
+    invalidateQueueGeneration("plugin reload")
     if pluginState.requestSocket then
         pcall(function() pluginState.requestSocket:close() end)
     end
@@ -653,9 +808,9 @@ local function resetForReload()
     pluginState.lastConnectedTime = nil
     pluginState.needsFullRestart = false
     pluginState.freshRestart = false
-    pluginState.inFlightRequests = 0
-    pluginState.requestQueue = {}
-    pluginState.queueRunning = false
+    if not pluginState.queueRunning then
+        pluginState.inFlightRequests = 0
+    end
 end
 
 addLog("PluginInfoProvider loaded")

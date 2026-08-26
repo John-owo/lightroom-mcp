@@ -352,3 +352,47 @@ Unverified boundaries:
   and `git diff --check --cached` passed: branch `codex/roadmap-t02` was clean,
   HEAD was `c7dbca2`, and the index had no whitespace errors. The final amend
   below only records this verification in the work log.
+- Review follow-up started from `c8714a0` without rewriting or resetting it.
+  The new scope addresses queue generation ownership across stop/reload/start,
+  stale-worker response suppression, MCP metadata-key grammar, truthful
+  `get_selected_photos` selection semantics, and bidirectional contract/map
+  equality.
+- Verification fallback Lua runner after the lifecycle fixes passed 23 specs,
+  including Stop->Start and reset/reload mid-flight generation cases.
+- Verification `npm.cmd test -- --runInBand tests/list-tools-handler.test.ts`
+  passed 1 suite and 58 tests after metadata-key and bidirectional-map tests.
+- Corrected legacy `_G.LightroomMCP_State` backfill so an existing live server
+  from before the generation flag was introduced remains queue-accepting after
+  InfoProvider re-evaluation instead of silently dropping authenticated calls.
+- Review follow-up verification with the prepared fallback Lua runner passed 25
+  specs, including Stop->Start, reset/reload mid-flight, worker-start failure,
+  and server-task-start failure recovery cases.
+- Review-required fixes implemented: queue generations now capture their own
+  request table and retain old-worker ownership through stop/reload/start;
+  stale responses are suppressed, pending old requests are cleared, and worker,
+  server-task, stop, reset, and context-cleanup error paths release ownership
+  safely. Added observable lifecycle/error tests.
+- Changed the MCP semantics key to
+  `io.github.john-owo.lightroom-mcp/operation-semantics`, added one-slash
+  reverse-DNS grammar coverage and bidirectional definition/map key equality,
+  and corrected `get_selected_photos.requires_active_selection` to false
+  because it falls back to filmstrip selection.
+- Review follow-up verification `npm.cmd test -- --runInBand
+  tests/list-tools-handler.test.ts`: passed 1 suite and 58 tests.
+- Review follow-up verification `npm.cmd run check` from `server`: passed.
+- Review follow-up verification `npm.cmd run lint` from `server`: passed.
+- Review follow-up verification `npm.cmd run build` from `server`: passed.
+- Review follow-up verification `npm.cmd test -- --runInBand` from `server`:
+  passed 13 suites and 163 tests.
+- Review follow-up verification using the prepared fallback Lua runner:
+  passed 25 specs. Lua 5.4.6 `luac -p` passed for plugin/spec, Selene passed
+  with 0 errors/0 warnings/0 parse errors, and `git diff --check` passed with
+  only normal CRLF normalization warnings.
+- Review follow-up note: prior final-amend commit `c7dbca2` was superseded by
+  `c8714a0`; this follow-up remains an additive, unre-written correction on the
+  same `codex/roadmap-t02` branch and is not yet committed.
+- Final pre-commit `git diff --check`, `git status --short --branch`, and
+  `git diff --stat HEAD` passed; only the five intended follow-up files are
+  modified on `codex/roadmap-t02`.
+- Next command is the additive commit `git add -- <five follow-up files>` and
+  `git commit -m "fix: close T02 review findings (#3)"`.

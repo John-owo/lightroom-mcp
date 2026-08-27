@@ -783,3 +783,12 @@ Unverified boundaries:
 - The append-only final-status correction itself passed `git diff --check`;
   status showed only the intended WORKLOG modification pending its small
   follow-up documentation commit.
+- Completion record superseding that pending sentence: T03 review-fix
+  implementation and documentation are committed; the worktree was clean at
+  the post-commit checkpoint; the post-commit full-range diff check passed; no
+  further T03 code or documentation change is pending. Independent review-fix
+  rerun evidence: server full `npm.cmd test -- --runInBand` passed 15 suites /
+  172 tests; `npm.cmd run check`, `npm.cmd run lint`, and `npm.cmd run build`
+  passed; `HandlerVirtualCopy_spec.lua` passed 14/14; and
+  `git diff --check 498575a...89cfd96` passed. Lua results remain fallback
+  mock/spec evidence and live Lightroom acceptance remains unverified.

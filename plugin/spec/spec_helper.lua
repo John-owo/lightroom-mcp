@@ -80,13 +80,21 @@ end
 -- Build a fake photo with the given metadata table.
 -- meta keys correspond to keys passed to getRawMetadata / getFormattedMetadata / localIdentifier.
 function M.fakePhoto(meta)
+    local function readPhotoMetadata(key)
+        if meta.__requireReadAccess and meta.__isInReadAccess
+            and not meta.__isInReadAccess() then
+            error("fakePhoto metadata read outside withReadAccessDo", 2)
+        end
+        return readMetadata(meta, key)
+    end
+
     local photo = {
         localIdentifier = meta.localIdentifier or meta.id or "photo-id",
         -- Test-only access for the fake catalog's faithful Virtual Copy
         -- mutation. Production handlers never inspect this field.
         __meta = meta,
-        getRawMetadata = function(_, key) return readMetadata(meta, key) end,
-        getFormattedMetadata = function(_, key) return readMetadata(meta, key) end,
+        getRawMetadata = function(_, key) return readPhotoMetadata(key) end,
+        getFormattedMetadata = function(_, key) return readPhotoMetadata(key) end,
         getDevelopSettings = function() return meta.developSettings or {} end,
         addKeyword = function(_, kw)
             meta.__addedKeywords = meta.__addedKeywords or {}
@@ -162,6 +170,15 @@ function M.fakeCatalog(opts)
     local function markQuery()
         if insideReadAccess then queriedInsideReadAccess = true end
     end
+
+    local function installMetadataGate(photo)
+        local meta = photo and photo.__meta
+        if opts.rejectMetadataOutsideReadAccess and meta then
+            meta.__requireReadAccess = true
+            meta.__isInReadAccess = function() return insideReadAccess end
+        end
+    end
+    for _, photo in ipairs(photos) do installMetadataGate(photo) end
 
     local function photoMatches(photo, criterion)
         local crit = criterion.criteria
@@ -271,14 +288,15 @@ function M.fakeCatalog(opts)
                     local copyMeta = {
                         id = tostring(nextLocalIdentifier),
                         uuid = "uuid-copy-" .. tostring(nextLocalIdentifier),
-                        path = source:getRawMetadata('path'),
-                        fileName = source:getFormattedMetadata('fileName'),
+                        path = sourceMeta.path or source:getRawMetadata('path'),
+                        fileName = sourceMeta.fileName or source:getFormattedMetadata('fileName'),
                         copyName = copyName,
                         isVirtualCopy = true,
                         masterPhoto = source,
                     }
                     nextLocalIdentifier = nextLocalIdentifier + 1
                     local copy = M.fakePhoto(copyMeta)
+                    installMetadataGate(copy)
                     sourceMeta.virtualCopies = sourceMeta.virtualCopies or {}
                     table.insert(sourceMeta.virtualCopies, copy)
                     sourceMeta.countVirtualCopies = #sourceMeta.virtualCopies
@@ -340,6 +358,7 @@ function M.fakeCatalog(opts)
             targetPhoto = active
         end,
         addPhotoForTest = function(_, photo)
+            installMetadataGate(photo)
             table.insert(photos, photo)
         end,
     }

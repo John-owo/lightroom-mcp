@@ -19,6 +19,7 @@ interface Harness {
   request: PluginSocket;
   response: PluginSocket;
   setMalformed: (value: boolean) => void;
+  setPreMutationReview: (value: boolean) => void;
 }
 
 const TOKEN = "virtual-copy-integration-token";
@@ -71,6 +72,7 @@ async function startHarness(): Promise<Harness> {
     selection_restoration: { status: "restored", verified: true },
   };
   let malformed = false;
+  let preMutationReview = false;
   const [requestPort, responsePort] = await Promise.all([freePort(), freePort()]);
   const plugin = new FakePlugin({
     requestPort,
@@ -83,6 +85,20 @@ async function startHarness(): Promise<Harness> {
         expected_source_uuid: "uuid-master",
         operation_id: OPERATION_ID,
       });
+      if (preMutationReview) {
+        return {
+          operation_id: OPERATION_ID,
+          marker: MARKER,
+          result: "REVIEW_REQUIRED",
+          partial: false,
+          source,
+          master,
+          candidates: [],
+          candidate_count: 0,
+          selection_restoration: { status: "restored", verified: true },
+          reason: "Virtual Copy creation was not started: Selection changed before Virtual Copy creation",
+        };
+      }
       if (!malformed) return result;
       return {
         ...result,
@@ -134,6 +150,7 @@ async function startHarness(): Promise<Harness> {
     request,
     response,
     setMalformed: (value) => { malformed = value; },
+    setPreMutationReview: (value) => { preMutationReview = value; },
   };
 }
 
@@ -210,5 +227,48 @@ describe("identity-safe Virtual Copy creation across MCP and plugin transports",
     await expect(harness.client.callTool(callArguments)).rejects.toThrow(
       /structured content does not match/i,
     );
+  }, 20_000);
+
+  it("round-trips a pre-mutation REVIEW_REQUIRED result through MCP structuredContent", async () => {
+    harness = await startHarness();
+    harness.setPreMutationReview(true);
+
+    const result = (await harness.client.callTool({
+      name: "create_virtual_copy",
+      arguments: {
+        source_photo_id: "100",
+        expected_source_uuid: "uuid-master",
+        operation_id: OPERATION_ID,
+      },
+    })) as ToolResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      operation_id: OPERATION_ID,
+      marker: MARKER,
+      result: "REVIEW_REQUIRED",
+      partial: false,
+      source: expect.objectContaining({
+        catalog_id: "100",
+        uuid: "uuid-master",
+        path: "/相片/夕陽.jpg",
+        filename: "夕陽.jpg",
+        copy_name: "原始版本",
+        is_virtual_copy: false,
+      }),
+      master: expect.objectContaining({
+        catalog_id: "100",
+        uuid: "uuid-master",
+        path: "/相片/夕陽.jpg",
+        filename: "夕陽.jpg",
+        copy_name: "原始版本",
+        is_virtual_copy: false,
+      }),
+      candidates: [],
+      candidate_count: 0,
+      selection_restoration: { status: "restored", verified: true },
+      reason: "Virtual Copy creation was not started: Selection changed before Virtual Copy creation",
+    });
+    expect(result.content[0].text).toBe(JSON.stringify(result.structuredContent, null, 2));
   }, 20_000);
 });

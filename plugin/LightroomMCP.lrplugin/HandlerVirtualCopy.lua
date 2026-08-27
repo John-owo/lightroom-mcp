@@ -164,13 +164,18 @@ local function restoreSelection(catalog, snapshot)
         end
 
         local otherSelected = {}
-        if snapshot.targetPhoto then
-            for _, photo in ipairs(snapshot.targetPhotos) do
-                if not samePhoto(photo, snapshot.targetPhoto) then
-                    table.insert(otherSelected, photo)
+        -- samePhoto reads persistent UUID metadata. Keep that per-photo read
+        -- inside the catalog gate; only the UI mutation itself runs outside
+        -- it, matching the Lightroom SDK deadlock boundary.
+        catalog:withReadAccessDo(function()
+            if snapshot.targetPhoto then
+                for _, photo in ipairs(snapshot.targetPhotos) do
+                    if not samePhoto(photo, snapshot.targetPhoto) then
+                        table.insert(otherSelected, photo)
+                    end
                 end
             end
-        end
+        end)
         catalog:setSelectedPhotos(snapshot.targetPhoto, otherSelected)
 
         if not selectionMatches(catalog, snapshot) then
@@ -435,6 +440,7 @@ function VirtualCopyHandler.createVirtualCopy(args)
 
     if not operationOk then
         if not mutationStarted then
+            local reason = "Virtual Copy creation was not started: " .. tostring(operationResult)
             if not restoreOk then
                 -- The catalog is untouched, but the UI selection is not
                 -- trustworthy. Preserve that boundary as structured review
@@ -444,14 +450,26 @@ function VirtualCopyHandler.createVirtualCopy(args)
                     marker,
                     sourceIdentity,
                     {},
-                    "Virtual Copy creation was not started; selection restoration failed: "
-                        .. tostring(restoreErr),
+                    reason .. "; selection restoration failed: " .. tostring(restoreErr),
                     restoration,
                     nil,
                     false
                 )
             end
-            error(operationResult, 0)
+            -- Selection ownership began, but readback found drift before the
+            -- catalog mutation. This is an uncertain workflow boundary: keep
+            -- the caller on the structured REVIEW_REQUIRED path even though
+            -- no Copy was created, so generic retry logic cannot run.
+            return reviewResult(
+                operationId,
+                marker,
+                sourceIdentity,
+                {},
+                reason,
+                restoration,
+                nil,
+                false
+            )
         end
 
         local possibleCopies = scanAfterPossibleCreate(catalog, source, marker, returnedCopies)

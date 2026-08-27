@@ -699,3 +699,75 @@ Unverified boundaries:
 - Escalated retry staged only the 12 scoped T03 files. `git diff --cached
   --check` passed, and staged status showed the expected README, WORKLOG,
   server contract/tests, plugin handler/dispatch/spec/helper files only.
+- Follow-up T03 P1 review finding: when temporary selection ownership begins
+  but readback detects drift before `createVirtualCopies`, the handler still
+  raises a generic error after successful restoration. ADR 0006 requires this
+  uncertain boundary to return a structured `REVIEW_REQUIRED` result with
+  `partial=false`, identity envelope, reason, and restoration status so a
+  caller cannot apply a generic retry policy.
+- TDD red test: updated the existing selection-drift Lua spec to assert the
+  required structured review envelope. The prepared fallback runner failed
+  1/14 (`13 passed, 1 failed`) because the handler still raised the generic
+  `Selection changed before Virtual Copy creation` error at its old branch.
+- Minimal handler fix: both pre-mutation outcomes (restored selection and
+  failed restoration) now return `reviewResult(..., partial=false)` with the
+  operation marker, source/master identity, reason, and machine-readable
+  restoration status. Targeted fallback Lua green: `HandlerVirtualCopy_spec.lua`
+  passed 14/14.
+- Adding a real `Dispatcher` + `PluginSocket` + MCP in-memory transport
+  assertion for the same pre-mutation `REVIEW_REQUIRED` branch, including its
+  strict output-schema validation and JSON text/structured-content parity.
+- Added the transport regression with a fake plugin returning the precise
+  pre-mutation review envelope. `npm.cmd test -- --runInBand
+  tests/virtual-copy-integration.test.ts` passed 1 suite / 2 tests, proving
+  both created and pre-mutation review branches pass MCP structured-content
+  validation and retain matching JSON text.
+- Follow-up standards review adds a second P1: `restoreSelection` currently
+  calls `samePhoto` outside `withReadAccessDo`, which reads UUID metadata
+  outside the repository's Lightroom read gate. The requested regression will
+  make the fake reject gate-external metadata reads and require restoration to
+  remain verified.
+- The review also found stale pre-commit WORKLOG wording after commit `9dd64dd`;
+  a later append-only correction will supersede those historical "will now be
+  staged/committed" lines with the actual commit/status/diff-check evidence.
+- TDD red for the metadata-gate finding: enabled a fake-catalog guard that
+  rejects UUID metadata reads outside `withReadAccessDo` on the selection-drift
+  regression. The fallback Lua runner failed 1/14 because `restoreSelection`
+  still called `samePhoto` outside the gate, and the returned review reported
+  `selection_restoration.status=failed`.
+- Moved `restoreSelection`'s `samePhoto`/UUID comparison into one read gate;
+  the gate-external section now performs only `setSelectedPhotos`. The fake
+  metadata guard regression is green: `HandlerVirtualCopy_spec.lua` passed
+  14/14, including verified restoration and the structured pre-mutation review.
+- Re-ran the MCP transport regression after adding the pre-mutation review
+  branch: `npm.cmd test -- --runInBand
+  tests/virtual-copy-integration.test.ts` passed 1 suite / 2 tests.
+- T03 review-fix server type check: `npm.cmd run check` passed source and
+  test TypeScript configurations.
+- T03 review-fix server lint: `npm.cmd run lint` passed with no ESLint
+  diagnostics.
+- T03 review-fix server production build: `npm.cmd run build` passed.
+- T03 review-fix full server suite: `npm.cmd test -- --runInBand` passed 15
+  suites / 172 tests.
+- T03 review-fix fallback Lua sweep: the prepared non-official Lua 5.4.6
+  runner executed all 13 spec files and reported `PASSED=152 FAILED=0`.
+  This remains mock/spec evidence, not live Lightroom validation.
+- T03 review-fix Lua syntax check: `luac.exe -p` parsed all five changed Lua
+  and Lua-spec files (`LUAC_PARSED=5`).
+- T03 review-fix Lua lint: `selene.exe plugin\\LightroomMCP.lrplugin`
+  reported 0 errors, 0 warnings, and 0 parse errors.
+- T03 review-fix pre-commit whitespace check: `git diff --check` passed; only
+  expected LF-to-CRLF normalization warnings were emitted. Status showed the
+  five intentional review-fix files (`WORKLOG.md`, HandlerVirtualCopy,
+  HandlerVirtualCopy_spec, spec_helper, and virtual-copy-integration) and no
+  unrelated changes.
+- Historical WORKLOG correction: the earlier "will now be staged/committed"
+  and "staged retry" entries describe the pre-`9dd64dd` implementation
+  checkpoint and are superseded by this entry. Commit `9dd64dd` was already
+  created and clean before this review-fix began; the five files above are the
+  new, intentionally uncommitted P1 review-fix scope.
+- First review-fix `git add -- <five scoped files>` attempt again failed before
+  staging because shared worktree metadata denied `index.lock` creation;
+  retrying the same scoped add with workspace escalation.
+- Escalated review-fix add staged exactly the five scoped files. `git diff
+  --cached --check` passed and staged status contained no unrelated paths.

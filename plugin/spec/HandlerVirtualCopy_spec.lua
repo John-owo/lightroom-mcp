@@ -190,6 +190,7 @@ describe("HandlerVirtualCopy.createVirtualCopy", function()
             photos = { source, other },
             targetPhotos = { other },
             targetPhoto = other,
+            rejectMetadataOutsideReadAccess = true,
             onSetSelectedPhotos = function(active, _, fakeCatalog)
                 if active == source and not drifted then
                     drifted = true
@@ -198,13 +199,33 @@ describe("HandlerVirtualCopy.createVirtualCopy", function()
             end,
         })
 
-        assert.has_error(function()
-            Handler.createVirtualCopy({
-                source_photo_id = "100",
-                expected_source_uuid = "uuid-master",
-                operation_id = "op-004",
-            })
-        end)
+        local result = Handler.createVirtualCopy({
+            source_photo_id = "100",
+            expected_source_uuid = "uuid-master",
+            operation_id = "op-004",
+        })
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_false(result.partial)
+        assert.are.equal(
+            "Virtual Copy creation was not started: Selection changed before Virtual Copy creation",
+            result.reason
+        )
+        assert.are.equal("op-004", result.operation_id)
+        assert.are.equal("Lightroom MCP VC [op-004]", result.marker)
+        assert.are.same({
+            catalog_id = "100",
+            uuid = "uuid-master",
+            path = "/相片/夕陽.jpg",
+            filename = "夕陽.jpg",
+            copy_name = "",
+            is_virtual_copy = false,
+        }, result.source)
+        assert.are.same(result.source, result.master)
+        assert.are.equal(0, result.candidate_count)
+        assert.are.same({}, result.candidates)
+        assert.are.equal("restored", result.selection_restoration.status)
+        assert.is_true(result.selection_restoration.verified)
         assert.are.equal(0, catalog.getCreateVirtualCopiesCalls())
         assert.are.equal(other, catalog:getTargetPhoto())
         assert.are.same({ other }, catalog:getTargetPhotos())

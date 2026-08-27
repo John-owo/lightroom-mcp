@@ -16,6 +16,7 @@ describe("HandlerMetadata.getPhotoMetadata", function()
             id = "42",
             path = "/p/sunset.jpg",
             fileName = "sunset.jpg",
+            isVirtualCopy = false,
             rating = 5,
             colorNameForLabel = "red",
             pickStatus = 1,
@@ -91,11 +92,34 @@ describe("HandlerMetadata.getPhotoMetadata", function()
         assert.are.equal("uuid-master", copyResult.master.uuid)
     end)
 
+    it("fails closed when virtual-copy status is missing or malformed", function()
+        local cases = {
+            { id = "201", status = nil },
+            { id = "202", status = "false" },
+        }
+        for _, case in ipairs(cases) do
+            local meta = {
+                id = case.id,
+                uuid = "uuid-uncertain-" .. case.id,
+                path = "/p/uncertain-" .. case.id .. ".jpg",
+                fileName = "uncertain-" .. case.id .. ".jpg",
+            }
+            if case.status ~= nil then meta.isVirtualCopy = case.status end
+            local photo = helper.fakePhoto(meta)
+            local _, Handler = setup({ photo })
+
+            assert.has_error(function()
+                Handler.getPhotoMetadata({ photo_id = case.id })
+            end)
+        end
+    end)
+
     it("exposes HSL develop settings with SDK keys", function()
         local photo = helper.fakePhoto({
             id = "43",
             path = "/p/portrait.jpg",
             fileName = "portrait.jpg",
+            isVirtualCopy = false,
             developSettings = {
                 HueAdjustmentRed = -8,
                 SaturationAdjustmentOrange = -15,
@@ -116,6 +140,7 @@ describe("HandlerMetadata.getPhotoMetadata", function()
             id = "44",
             path = "/p/no-hsl.jpg",
             fileName = "no-hsl.jpg",
+            isVirtualCopy = false,
             developSettings = { Exposure2012 = 0.25 },
         })
         local _, Handler = setup({ photo })
@@ -130,6 +155,7 @@ describe("HandlerMetadata.getPhotoMetadata", function()
             id = "7",
             path = "/p/street.jpg",
             fileName = "street.jpg",
+            isVirtualCopy = false,
             title = "Main Street",
             caption = "Downtown at dusk",
             headline = "Evening commute",
@@ -162,7 +188,10 @@ describe("HandlerMetadata.getPhotoMetadata", function()
     end)
 
     it("omits gps, location, and copyright groups when empty", function()
-        local photo = helper.fakePhoto({ id = "8", path = "/p/no-gps.jpg", fileName = "no-gps.jpg" })
+        local photo = helper.fakePhoto({
+            id = "8", path = "/p/no-gps.jpg", fileName = "no-gps.jpg",
+            isVirtualCopy = false,
+        })
         local _, Handler = setup({ photo })
 
         local r = Handler.getPhotoMetadata({ photo_id = "8" })
@@ -172,7 +201,9 @@ describe("HandlerMetadata.getPhotoMetadata", function()
     end)
 
     it("omits the gps group when the raw table carries no coordinates", function()
-        local photo = helper.fakePhoto({ id = "10", fileName = "empty-gps.jpg", gps = {} })
+        local photo = helper.fakePhoto({
+            id = "10", fileName = "empty-gps.jpg", isVirtualCopy = false, gps = {},
+        })
         local _, Handler = setup({ photo })
 
         local r = Handler.getPhotoMetadata({ photo_id = "10" })
@@ -192,6 +223,7 @@ describe("HandlerMetadata.getPhotoMetadata", function()
             id = "99",
             path = "/match-by-path.jpg",
             fileName = "f.jpg",
+            isVirtualCopy = false,
         })
         local _, Handler = setup({ photo })
 

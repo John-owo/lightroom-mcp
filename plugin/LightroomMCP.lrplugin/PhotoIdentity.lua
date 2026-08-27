@@ -11,11 +11,16 @@ end
 local function identityFields(photo)
     if not photo then return nil end
 
+    local isVirtualCopy = photo:getRawMetadata('isVirtualCopy')
+    if type(isVirtualCopy) ~= "boolean" then
+        error("Photo identity is uncertain: isVirtualCopy must be boolean", 0)
+    end
+
     return {
         catalog_id = catalogId(photo),
         uuid = photo:getRawMetadata('uuid'),
         copy_name = photo:getFormattedMetadata('copyName'),
-        is_virtual_copy = photo:getRawMetadata('isVirtualCopy') == true,
+        is_virtual_copy = isVirtualCopy,
     }
 end
 

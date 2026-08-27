@@ -896,3 +896,44 @@ Unverified boundaries:
   listener or established connection on ports 58763/58764. No live operation
   was attempted; T04 remains blocked on Lightroom/plugin availability after
   the reviewed T01 fix is integrated.
+
+## 2026-08-28 - T01 identity review fix
+
+- TDD red: added a public `HandlerMetadata.getPhotoMetadata` regression for
+  missing (`nil`) and malformed (`"false"`) `isVirtualCopy` metadata. The
+  prepared non-official Lua 5.4.6 runner failed as expected with 11 passing
+  and 1 failing test because the current `PhotoIdentity.identityFields`
+  coerced the uncertain value to `is_virtual_copy=false` instead of failing
+  closed.
+- Minimal implementation: `PhotoIdentity.identityFields` now requires the
+  SDK `isVirtualCopy` readback to be a Boolean and raises a fail-closed
+  uncertainty error for missing or malformed values; valid Boolean values are
+  preserved unchanged. Existing metadata fixtures now state their intended
+  Master status explicitly.
+- Targeted Lua green: the prepared non-official Lua 5.4.6 runner executed
+  `plugin/spec/HandlerMetadata_spec.lua` with 12 passed and 0 failed. This is
+  mock/spec evidence, not live Lightroom validation.
+- Official Lua verification attempt `mise run lua:test --
+  plugin/spec/HandlerMetadata_spec.lua` failed before process creation because
+  `mise` is not available on PATH; the prepared fallback runner above is used
+  instead. `selene` is likewise unavailable on PATH.
+- Lua syntax check with prepared Lua 5.4.6 `luac -p` passed for
+  `PhotoIdentity.lua` and `HandlerMetadata_spec.lua`.
+- Server full test `npm.cmd test -- --runInBand` passed: 15 suites and 172
+  tests.
+- Server TypeScript check `npm.cmd run check` passed source and test
+  configurations.
+- Server lint `npm.cmd run lint` passed with no ESLint diagnostics.
+- Server production build `npm.cmd run build` passed.
+- Pre-commit `git diff --check` passed; Git emitted only expected LF-to-CRLF
+  normalization warnings. Status showed only the three owned files:
+  `PhotoIdentity.lua`, `HandlerMetadata_spec.lua`, and `WORKLOG.md`.
+- Main-agent staged-diff review found the change minimal and limited to the
+  public metadata identity seam. Independent follow-up Standards review passed
+  with no hard violation or smell finding; independent Spec review passed with
+  no missing requirement, scope creep, or incorrect behavior.
+- Initial scoped `git add` failed before staging because the shared worktree
+  metadata denied creation of
+  `D:/photo/lightroom-mcp-john/.git/worktrees/lightroom-mcp-roadmap-integration/index.lock`
+  (`Permission denied`); no commit was created and no unrelated path was
+  touched.

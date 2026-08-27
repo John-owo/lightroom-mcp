@@ -462,6 +462,10 @@ Unverified boundaries:
 - Additive fix commit completed as `ab8e87f` (`fix: harden T02 worker
   lifecycle (#3)`). This records the post-review implementation and does not
   rewrite `c8714a0` or `28e5b46`.
+- Post-commit verification before this final log append: `git status
+  --short --branch`, `git log -3 --oneline --decorate`, and `git diff --check`
+  passed on a clean `codex/roadmap-t02` branch at `b930f69`, with
+  `ab8e87f` immediately below it and `28e5b46` preserved.
 - Verification `git diff --check` passed; Git emitted only expected LF/CRLF
   normalization warnings for the three edited text files.
 - Full server verification: `npm.cmd test -- --runInBand` passed 13 suites and

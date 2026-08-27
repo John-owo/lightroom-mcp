@@ -813,3 +813,86 @@ Unverified boundaries:
   contract/mock/transport/static verification only: no live Lightroom
   mutation, rendered-output inspection, source/sidecar proof, GitHub write,
   push, issue closure, or PR is claimed.
+
+## 2026-08-27 - takeover after referenced orchestrator usage limit
+
+- Re-read the workspace `PHOTO_WORKSPACE.md`, this worktree's `AGENTS.md`,
+  `CLAUDE.md`, and `WORKLOG.md` before continuing the roadmap task.
+- Read the referenced Codex task `Implement photo-agent roadmap issues`. Its
+  latest captured state was interrupted by the account usage limit while T03
+  was still described as pending; direct worktree inspection supersedes that
+  stale snapshot: T03 is complete on `codex/roadmap-t03` at `7518ce4`, and its
+  reviewed commits are integrated into this clean worktree at `285244c`.
+- Read-only status checks confirmed `codex/roadmap-integration` is clean and
+  contains the T01-T03 integration closeout. No source or photo files were
+  changed by this takeover check.
+- The first read-only `gh issue view 5 --repo John-owo/lightroom-mcp ...`
+  attempt failed because the sandbox denied GitHub socket access. The
+  explicitly requested read-only escalated retry was rejected by the same
+  account 5-hour usage limit before process creation. No GitHub state changed;
+  the exact T04 remote body remains unverified in this continuation.
+- Local accepted ADRs and the complete roadmap specification remain the
+  authoritative scope available offline. No T04 implementation has started
+  until its local contract seams are checked against those documents.
+
+## 2026-08-27 - T04 live-gate preflight and blocked boundary
+
+- GitHub connector readback confirmed issue #5 is `[T04] Live-verify the
+  Workflow Copy P0 gate`. Its required evidence is live creation, identity,
+  response-loss reconciliation, selection restoration, failure handling, and
+  unchanged Master Develop State, source hash/timestamp, and sidecar state.
+  It is blocked by lightroom-mcp issue #4 (T03).
+- Read-only local preflight found no Lightroom process, both plugin sockets
+  (`127.0.0.1:58763` and `:58764`) closed, and no readable token. The token
+  path check itself returned Windows `Access to the path ... is denied`; the
+  direct probe consequently failed with `EPERM`. No Lightroom or photo state
+  was changed.
+- The configured checkout `D:\photo\lightroom-mcp-john` remains on the
+  boundary-docs branch with pre-existing unrelated lifecycle changes and does
+  not contain the T03 `create_virtual_copy` implementation. No plugin was
+  installed or replaced, so T04 live acceptance cannot be claimed in this
+  environment.
+- Because T04 is an evidence-only gate blocked by unavailable Lightroom,
+  implementation work moves to the next locally actionable dependency frontier:
+  PhotoAgent T06 (`photo-agent#11`), versioned backend handshake before work.
+
+## 2026-08-28 - T01-T03 release gate and dependency refresh
+
+- Re-read the workspace/repository instructions, CLAUDE architecture rules,
+  current roadmap, accepted PhotoAgent ADRs, GitHub issue bodies, and native
+  parent/dependency graph. GitHub still showed T01-T03 open even though their
+  reviewed commits are integrated here; T04 remains the next required live
+  gate and blocks PhotoAgent T07 plus later Lightroom capability work.
+- `git fetch --prune origin` succeeded. The integration branch is 17 commits
+  ahead of `origin/codex/project-boundary-docs`; no remote roadmap branch
+  exists. The only pre-verification working-tree change was the prior
+  append-only T04 blocker record in this file.
+- Fresh server verification passed: `npm.cmd test -- --runInBand` reported 15
+  Jest suites / 172 tests; `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd run build`, and `git diff --check 46d3543...HEAD` passed.
+- Official Lua verification could not start because `mise` is not on PATH in
+  this environment. This failure does not replace the previously recorded
+  integration evidence from the prepared fallback runner: 13 spec files / 152
+  behavior tests, complete Lua syntax parsing, and Selene source lint all
+  passed for the same integrated commits.
+- No Lightroom process, plug-in installation, catalog operation, Develop
+  mutation, render, source/sidecar write, or visual QA is claimed by this gate.
+
+### 2026-08-28 two-axis T01-T03 review and live preflight
+
+- Independent Standards review found no hard repository-rule violation. It
+  noted judgement-only identity-helper duplication between the slim mutation
+  envelope and rich metadata readback; their different public contracts make
+  a shared refactor unnecessary for these tickets.
+- Independent Spec review identified one accepted T01 fix: metadata readback
+  currently coerces a missing/malformed `isVirtualCopy` SDK value to `false`,
+  which could misreport uncertain identity as a Master. T01 closure is held
+  until a red/green fail-closed test and minimal implementation are complete.
+- The review's T03 collection-placement concern is not a missing backend
+  behavior. ADR 0006 requires `create_virtual_copy` to exclude placement;
+  existing `add_to_collection` is the separate operation, and PhotoAgent T07
+  owns retaining/reporting the Copy if that later operation partially fails.
+- Fresh read-only T04 preflight found `LIGHTROOM_PROCESS=absent` and no
+  listener or established connection on ports 58763/58764. No live operation
+  was attempted; T04 remains blocked on Lightroom/plugin availability after
+  the reviewed T01 fix is integrated.

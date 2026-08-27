@@ -936,6 +936,20 @@ Unverified boundaries:
   12/12 targeted metadata behavior tests, `luac -p` parsed both changed Lua
   files, server Jest reported 15 suites / 172 tests, TypeScript check, ESLint,
   production build, range `git diff --check`, and clean status all passed.
+
+## 2026-08-28 - remote publication authorization boundary
+
+- A normal non-force push of `codex/roadmap-integration` was rejected before
+  process creation by the external-action reviewer because explicit approval
+  to transmit the complete branch payload to GitHub was required. No workaround
+  or alternate transport was attempted.
+- Read-only GitHub ref verification returned HTTP 404 for the intended branch
+  in both repositories, confirming neither integration branch was published.
+  Issues #2-#4 remain open and no completion comment was posted.
+- T04 remains independently blocked in the current environment by absent
+  Lightroom/plugin sockets. The next remote actions require explicit branch
+  push authorization; the next live acceptance action requires Lightroom
+  Classic plus a non-critical catalog photo.
 - Initial scoped `git add` failed before staging because the shared worktree
   metadata denied creation of
   `D:/photo/lightroom-mcp-john/.git/worktrees/lightroom-mcp-roadmap-integration/index.lock`

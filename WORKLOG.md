@@ -81,3 +81,26 @@ Unverified boundaries:
 - Final ref/status check: local `HEAD` and `origin/codex/project-boundary-docs`
   both equal `cc51c6a`. Only the pre-existing server lifecycle files remain
   modified/untracked locally; the published documentation scope is clean.
+
+## 2026-08-27 - roadmap implementation orchestration baseline
+
+- Read the workspace/project instructions, `CLAUDE.md`, this work log, PhotoAgent
+  roadmap/domain documents, and the published GitHub issue graph before selecting
+  implementation work. Live GitHub readback showed all 61 roadmap nodes open.
+- Selected unblocked backend tickets T01 (`lightroom-mcp#2`) and T02
+  (`lightroom-mcp#3`) for parallel isolated implementation because both are
+  prerequisites of T03 and neither depends on live Lightroom evidence.
+- Preserved the mixed configured checkout at `D:\photo\lightroom-mcp-john` and
+  created clean worktrees from committed baseline `46d3543` for T01, T02, and
+  integration review. The first sandboxed `git worktree add -b` attempt created
+  branch refs but failed to create worktree metadata with `Permission denied`;
+  the approved retry attached the existing refs successfully.
+- Integration baseline `npm.cmd run check` and `npm.cmd run lint` passed. The
+  first combined command yielded while tests were still running, so it was not
+  counted as a complete suite result. The explicit `npm.cmd test -- --runInBand`
+  rerun passed: 13 suites and 160 tests. `npm.cmd run build` passed.
+- `git status --short` and `git diff --check` were clean after the baseline.
+  A read-only `Get-CimInstance Win32_Process` diagnostic was denied by Windows
+  access control; it did not change repository or runtime state.
+- No Lightroom connection, catalog operation, photo mutation, visual QA, GitHub
+  write, commit, push, or issue closure has been performed by this baseline.

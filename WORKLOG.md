@@ -792,3 +792,24 @@ Unverified boundaries:
   passed; `HandlerVirtualCopy_spec.lua` passed 14/14; and
   `git diff --check 498575a...89cfd96` passed. Lua results remain fallback
   mock/spec evidence and live Lightroom acceptance remains unverified.
+
+## 2026-08-27 - T03 roadmap integration verification
+
+- The first scoped `git cherry-pick 9dd64dd 6fcae2d 89cfd96 7518ce4`
+  attempt failed before sequencing because the shared worktree Git metadata
+  denied creation of the sequencer directory. The escalated retry reached one
+  expected `WORKLOG.md` conflict with the T01/T02 integration closeout.
+- Resolved the append-only work-log conflict by retaining both the T01/T02
+  integration closeout and the complete T03 implementation/review history.
+  The four reviewed T03 commits were integrated as `ac20d9f`, `59eb600`,
+  `14aacf2`, and `d5c35fb`; no production-code conflict occurred.
+- Post-integration server verification passed: full Jest 15 suites / 172
+  tests, TypeScript source/test checks, ESLint, and production build.
+- Ran all 13 Lua spec files in separate processes through the prepared
+  non-official fallback runner; all 152 reported behavior tests passed.
+  `luac -p` parsed all 32 Lua source/spec files, and Selene reported 0
+  errors, 0 warnings, and 0 parse errors for the plugin source.
+- `git diff --check 46d3543...HEAD` passed. This integration evidence is
+  contract/mock/transport/static verification only: no live Lightroom
+  mutation, rendered-output inspection, source/sidecar proof, GitHub write,
+  push, issue closure, or PR is claimed.

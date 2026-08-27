@@ -491,3 +491,34 @@ Unverified boundaries:
   test-config checks.
 - Verification from `server`: `npm.cmd run lint` passed ESLint for `src` and
   `tests`.
+
+## 2026-08-27 - T01/T02 integration verification
+
+- Cherry-picked the reviewed T01 and T02 commit chains into
+  `codex/roadmap-integration`. The first commit from each chain conflicted in
+  this append-only work log; both histories were retained. T02 also conflicted
+  with T01 in the tool contract/list-tools files. The manual merge preserves
+  both T01 `outputSchema` publication and T02 operation-semantics `_meta` for
+  each tool; no feature was selected over the other.
+- Integration `npm.cmd test -- --runInBand` passed 14 suites and 167 tests,
+  including the identity socket/Dispatcher/MCP round trip and tool-semantics
+  contract coverage. `npm.cmd run check`, `npm.cmd run lint`, and
+  `npm.cmd run build` all passed.
+- A first all-files fallback Lua run loaded all specs into one custom runner
+  process and reported 135 passed / 3 failed in `JSON_spec.lua`. Inspection and
+  an isolated rerun showed the failures came from cross-file
+  `package.loaded.JSON` mock contamination in this non-official runner, not a
+  JSON implementation failure. This failed command is retained as evidence and
+  is not counted as a passing suite.
+- Re-ran all 12 Lua spec files in separate Lua 5.4.6 processes with the prepared
+  fallback runner: 138 tests passed and 0 failed. This avoids cross-file module
+  cache contamination and includes 27/27 serialized queue/server lifecycle
+  tests plus T01 identity/lookup/handler coverage. Official mise/Busted remains
+  unavailable in this environment.
+- Lua 5.4.6 `luac -p` passed for all 30 Lua files under the plugin source and
+  spec directories. Selene 0.31.0 passed the plugin source with 0 errors,
+  0 warnings, and 0 parse errors. `git diff --check` is the remaining
+  post-worklog/commit check.
+- No real Lightroom catalog, SDK cancellation, socket lifecycle, photo
+  mutation, UI/visual verification, GitHub write, push, issue closure, or PR
+  creation is claimed by this integration verification.

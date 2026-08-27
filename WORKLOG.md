@@ -534,3 +534,13 @@ Unverified boundaries:
 - Post-refactor targeted verification passed: identity integration plus
   list-tools contract tests ran 2 suites / 61 tests, and `npm.cmd run check`
   passed both source and test TypeScript configurations.
+- Final integration Spec review passed with 0 actionable findings after
+  independently running the identity/contract suites (61/61), focused queue
+  lifecycle Lua specs (27/27), and full server suite (167/167). Final Standards
+  re-review also passed with 0 findings after commit `498575a`; TypeScript
+  checks and `git diff --check 46d3543...HEAD` passed and the worktree was
+  clean.
+- With T01 and T02 locally integrated and reviewed, live issue #4 (`T03`) is
+  the next dependency-frontier item. Created local branch/worktree
+  `codex/roadmap-t03` from `498575a` for isolated implementation. No GitHub
+  issue state or remote branch was changed.

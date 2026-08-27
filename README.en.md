@@ -172,11 +172,16 @@ If you'd rather drop the plugin in by hand:
 
 ## Tools
 
+The server currently exposes 19 tools. The Virtual Copy creation tool has
+automated contract, mock, and transport coverage; live Lightroom acceptance is
+still pending.
+
 | Tool | What it does |
 | --- | --- |
 | `search_photos` | Search by filename / keywords / rating / date range. |
 | `get_selected_photos` | Photos selected in Lightroom (or filmstrip). |
 | `get_photo_metadata` | Stable catalog ID/UUID, Master and Virtual Copy relationships, EXIF, GPS, IPTC location, copyright + develop settings for one catalog photo. Source paths are display-only and cannot be used as photo selectors. |
+| `create_virtual_copy` | Create or reconcile one identity-verified Virtual Copy by stable catalog ID, expected Master UUID, and operation marker. Ambiguous or partial outcomes fail closed with `REVIEW_REQUIRED`; collection placement is separate. Contract, mock, and transport integration coverage exists, but live Lightroom acceptance is still pending. |
 | `list_collections` | All collections and collection sets. |
 | `create_collection` | New collection (optional parent set). |
 | `add_to_collection` | Add photos to a named collection. |

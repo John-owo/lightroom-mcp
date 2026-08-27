@@ -14,6 +14,7 @@ const EXPECTED_TOOL_NAMES = [
   'search_photos',
   'get_selected_photos',
   'get_photo_metadata',
+  'create_virtual_copy',
   'list_collections',
   'create_collection',
   'add_to_collection',
@@ -32,8 +33,8 @@ const EXPECTED_TOOL_NAMES = [
 ] as const;
 
 describe('TOOL_DEFINITIONS', () => {
-  it('contains exactly 18 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(18);
+  it('contains exactly 19 tools', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(19);
   });
 
   it('tool names are unique', () => {
@@ -89,6 +90,7 @@ describe('tool required fields', () => {
 
   it.each<[string, string[]]>([
     ['get_photo_metadata', ['photo_id']],
+    ['create_virtual_copy', ['source_photo_id', 'expected_source_uuid', 'operation_id']],
     ['create_collection', ['name']],
     ['add_to_collection', ['collection_name', 'photo_ids']],
     ['set_keywords', ['photo_ids']],
@@ -160,6 +162,61 @@ describe('photo identity contract', () => {
       items: expect.objectContaining({
         required: expect.arrayContaining(['catalog_id', 'uuid', 'is_virtual_copy']),
       }),
+    });
+  });
+});
+
+describe('virtual copy creation contract', () => {
+  it('exposes a strict identity-safe create_virtual_copy tool', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'create_virtual_copy');
+    const properties = tool?.inputSchema.properties as Record<string, {
+      type?: string;
+      pattern?: string;
+      minLength?: number;
+      maxLength?: number;
+    }>;
+    const metadata = tool?._meta as Record<string, unknown> | undefined;
+    const semantics = metadata?.[OPERATION_SEMANTICS_META_KEY] as Record<string, unknown> | undefined;
+
+    expect(tool).toBeDefined();
+    expect(tool?.inputSchema.required).toEqual([
+      'source_photo_id',
+      'expected_source_uuid',
+      'operation_id',
+    ]);
+    expect(properties.source_photo_id).toMatchObject({
+      type: 'string',
+      pattern: '^[0-9]+$',
+    });
+    expect(properties.operation_id).toMatchObject({
+      type: 'string',
+      minLength: 1,
+      maxLength: 64,
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$',
+    });
+    expect(tool?.outputSchema).toMatchObject({
+      type: 'object',
+      required: expect.arrayContaining([
+        'operation_id',
+        'marker',
+        'result',
+        'selection_restoration',
+      ]),
+    });
+    expect(tool?.outputSchema?.oneOf).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        required: expect.arrayContaining(['source', 'master', 'copy', 'is_virtual_copy']),
+      }),
+      expect.objectContaining({ required: expect.arrayContaining(['partial', 'reason']) }),
+    ]));
+    expect(semantics).toMatchObject({
+      scope: 'selection',
+      requires_active_selection: true,
+      requires_editor_foreground: true,
+      idempotent: false,
+      concurrency: 'exclusive_backend',
+      retry_policy: 'readback_before_retry',
+      safe_to_resume: false,
     });
   });
 });

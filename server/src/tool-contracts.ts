@@ -173,6 +173,21 @@ const catalogPhotoId = {
   description: "Stable Lightroom catalog photo ID (localIdentifier); paths are not accepted",
 };
 
+/**
+ * Operation IDs are deliberately boring transport-safe tokens. They are
+ * reconciliation keys, not an authorization to blindly repeat a catalog
+ * mutation after a timeout.
+ */
+export const OPERATION_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
+
+const operationId = {
+  type: "string",
+  minLength: 1,
+  maxLength: 64,
+  pattern: OPERATION_ID_PATTERN,
+  description: "ASCII reconciliation token (1-64 characters); reuse the same operation ID for reconciliation and never treat a transport request ID as blind retry authorization",
+};
+
 const photoIdArray = (description: string) => ({
   ...stringArray(description, MAX_BULK_PHOTO_IDS),
   items: catalogPhotoId,
@@ -180,7 +195,9 @@ const photoIdArray = (description: string) => ({
 
 const photoIdentityReferenceOutputSchema = {
   type: "object",
+  additionalProperties: false,
   properties: {
+    id: { oneOf: [{ type: "number" }, { type: "string" }] },
     catalog_id: catalogPhotoId,
     uuid: { type: "string", minLength: 1 },
     path: { type: "string" },
@@ -189,6 +206,67 @@ const photoIdentityReferenceOutputSchema = {
     is_virtual_copy: { type: "boolean" },
   },
   required: ["catalog_id", "uuid", "is_virtual_copy"],
+};
+
+const selectionRestorationOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: {
+      type: "string",
+      enum: ["restored", "not_needed", "not_attempted", "failed"],
+    },
+    verified: { type: "boolean" },
+    active_sources_verified: { type: "boolean" },
+    reason: { type: "string" },
+  },
+  required: ["status"],
+};
+
+/**
+ * Public result contract for identity-verified Workflow Copy creation. The
+ * required envelope is also valid for retained-copy REVIEW_REQUIRED results;
+ * optional identities preserve whatever readback survived a partial failure.
+ */
+export const VIRTUAL_COPY_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation_id: operationId,
+    marker: { type: "string", minLength: 1 },
+    result: {
+      type: "string",
+      enum: ["created", "reconciled", "REVIEW_REQUIRED"],
+    },
+    partial: { type: "boolean" },
+    source: photoIdentityReferenceOutputSchema,
+    master: photoIdentityReferenceOutputSchema,
+    copy: photoIdentityReferenceOutputSchema,
+    candidates: {
+      type: "array",
+      items: photoIdentityReferenceOutputSchema,
+    },
+    candidate_count: { type: "integer", minimum: 0 },
+    is_virtual_copy: { type: "boolean" },
+    selection_restoration: selectionRestorationOutputSchema,
+    reason: { type: "string" },
+  },
+  required: ["operation_id", "marker", "result", "selection_restoration"],
+  oneOf: [
+    {
+      properties: {
+        result: { enum: ["created", "reconciled"] },
+        is_virtual_copy: { enum: [true] },
+      },
+      required: ["source", "master", "copy", "is_virtual_copy"],
+    },
+    {
+      properties: {
+        result: { enum: ["REVIEW_REQUIRED"] },
+      },
+      required: ["partial", "reason"],
+    },
+  ],
 };
 
 /**
@@ -308,6 +386,30 @@ const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
         photo_id: catalogPhotoId,
       },
       required: ["photo_id"],
+    },
+  },
+  {
+    name: "create_virtual_copy",
+    luaHandler: "HandlerVirtualCopy.createVirtualCopy",
+    description:
+      "Create or reconcile one identity-verified Lightroom Virtual Copy from a Master photo. Requires a stable catalog ID, expected Master UUID, and an ASCII operation ID; path-only identities are rejected. Existing copies are reconciled by the operation marker before any creation. Ambiguous matches fail closed with REVIEW_REQUIRED, retained copies are reported, and no collection placement is performed.",
+    outputSchema: VIRTUAL_COPY_OUTPUT_SCHEMA,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        source_photo_id: {
+          ...catalogPhotoId,
+          description: "Stable Lightroom catalog ID of the expected Master; paths are not accepted",
+        },
+        expected_source_uuid: {
+          type: "string",
+          minLength: 1,
+          description: "Expected persistent UUID of the Master photo",
+        },
+        operation_id: operationId,
+      },
+      required: ["source_photo_id", "expected_source_uuid", "operation_id"],
     },
   },
   {
@@ -659,6 +761,13 @@ export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> =
     safe_to_resume: true,
   }),
   get_photo_metadata: readOnlySemantics("photo"),
+  create_virtual_copy: mutatingSemantics("selection", {
+    requires_active_selection: true,
+    requires_editor_foreground: true,
+    concurrency: "exclusive_backend",
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
   list_collections: readOnlySemantics("catalog"),
   create_collection: mutatingSemantics("catalog"),
   add_to_collection: mutatingSemantics("catalog", {

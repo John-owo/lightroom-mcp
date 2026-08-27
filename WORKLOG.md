@@ -544,3 +544,158 @@ Unverified boundaries:
   the next dependency-frontier item. Created local branch/worktree
   `codex/roadmap-t03` from `498575a` for isolated implementation. No GitHub
   issue state or remote branch was changed.
+
+## 2026-08-27 - T03 Virtual Copy creation implementation
+
+- Re-read this worktree's `AGENTS.md`, `CLAUDE.md`, `WORKLOG.md`, and the
+  accepted PhotoAgent ADR `0006-use-identity-safe-serialized-virtual-copy-creation.md`
+  before inspecting implementation files. Branch `codex/roadmap-t03` starts
+  clean at base `498575a`, which already contains reviewed T01 identity and
+  T02 serialized queue changes.
+- Escalated read-only `gh issue view 4 --repo John-owo/lightroom-mcp --json
+  number,title,body,state,labels,assignees,parent,subIssues,blockedBy,blocking,url`
+  confirmed `[T03] Create and reconcile an identity-verified Workflow Copy`,
+  ready-for-agent, blocked by open #2 and #3, and blocking PhotoAgent #11 plus
+  lightroom-mcp #5. Live acceptance requires source ID/UUID/operation ID,
+  Master-only source, verified Copy/Master identities and selection restore,
+  separate collection placement with retained partial failure, and same-op
+  timeout reconciliation without blind duplicate creation.
+- Inspected the T03 base seams (`tool-contracts.ts`, `list-tools-handler.test.ts`,
+  `PluginInfoProvider.lua`, `spec_helper.lua`, and existing plugin/server tests).
+  The branch currently has 18 public tools, no Virtual Copy dispatch entry, and
+  the fake catalog has no selected-photo/active-source mutation API; these are
+  the scoped seams needed for the TDD implementation.
+- TDD red: added the single public `create_virtual_copy` contract assertion and
+  ran `npm.cmd test -- --runInBand tests/list-tools-handler.test.ts` from
+  `server`; it failed as expected because the tool is not yet defined (60
+  existing tests passed, 1 new test failed).
+- Added the TypeScript `create_virtual_copy` input/output contract and its
+  conservative operation semantics, then expanded list-tools expectations to
+  19 tools. The same targeted Jest command reached 61 passing tests but failed
+  the existing Lua dispatch-parity assertion because the plugin dispatch entry
+  is intentionally not added yet.
+- Verified the Lightroom SDK catalog boundary against the published API
+  reference: `getActiveSources`/`setActiveSources` preserve the viewed sources,
+  `getTargetPhoto` is the active photo, `getTargetPhotos` is the selected/target
+  set, `setSelectedPhotos(activePhoto, otherSelectedPhotos)` takes the Master
+  as its first argument, and `createVirtualCopies(copyName)` operates on the
+  current selection and selects returned copies. No live Lightroom mutation
+  was performed.
+- Added `HandlerVirtualCopy.lua`, the plugin dispatch entry, realistic fake
+  selected-photo/active-source APIs and `HandlerVirtualCopy_spec.lua`. The
+  prepared fallback Lua runner passed all 9 initial T03 behavior specs. This
+  is a mock-only result; no real Lightroom mutation was attempted.
+- Verification command typo (failed before the runner started): the fallback
+  Lua command used `D:\photo\_workspace\runtime\lua-spec-runner.lua` instead
+  of the prepared `D:\photo\_agent_workspace\runtime\lua-spec-runner.lua`.
+- Hardened the handler after review: direct SDK `createVirtualCopies` call
+  without an unrequired write gate, exact marker equality, catalog-wide marker
+  evidence, retained returned-photo arrays, set-based selection readback,
+  yield-safe `LrTasks.pcall`, malformed status fail-closed behavior, and no
+  active-photo mutation refusal. Expanded behavior coverage accordingly; the
+  fallback Lua runner passed 14 T03 specs. No live Lightroom mutation was
+  performed.
+- Targeted server contract verification: `npm.cmd test -- --runInBand
+  tests/list-tools-handler.test.ts` passed 1 suite / 62 tests, including the
+  new strict input/output and operation-semantics contract.
+- Re-ran the T03 fallback Lua handler spec after the SDK/review hardening;
+  `lua-spec-runner.lua plugin\\spec\\HandlerVirtualCopy_spec.lua` passed 14/14.
+  This remains mock-only evidence and does not verify Lightroom runtime
+  behavior.
+- Added a real `Dispatcher` + `PluginSocket` + `FakePlugin` + MCP
+  `InMemoryTransport` integration harness. `npm.cmd test -- --runInBand
+  tests/virtual-copy-integration.test.ts` passed 1 suite / 1 test, including
+  Chinese Master/Virtual Copy identity transport, strict structured output,
+  and rejection of a malformed output type. This is transport integration
+  only; it does not prove live Lightroom behavior.
+- The fallback Lua runner passed the complete `PluginInfoProvider_spec.lua`
+  dispatch/lifecycle suite (27/27), including loading the new
+  `HandlerVirtualCopy` dispatch module. No real socket/plugin runtime was used.
+- A targeted regression check initially failed: `npm.cmd test -- --runInBand
+  tests/identity-integration.test.ts` rejected T01 Virtual Copy references
+  because the newly strict shared identity schema omitted the legacy numeric
+  `id` compatibility field. Added that explicitly as a typed number/string
+  property; the same integration test then passed 1/1, preserving the existing
+  identity contract while keeping extra relationship fields rejected.
+- Incorporated review hardening: the plugin now uses the SDK-documented
+  `setSelectedPhotos(activePhoto, otherSelectedPhotos)` shape and refuses a
+  missing restorable active photo before UI/mutation work; identity status is
+  accepted only when the SDK returns a Boolean; exact marker evidence is
+  catalog-wide and catches malformed/non-Master entries; returned arrays are
+  retained as evidence even when their count is unexpected; selection sets are
+  compared order-independently. SDK-wrapping error paths use `LrTasks.pcall`.
+- Updated `README.md` and `README.en.md` for the 19-tool surface and
+  `create_virtual_copy` safety boundary. Both documents explicitly distinguish
+  automated contract/mock/transport coverage from the still-pending live
+  Lightroom Classic acceptance; no live evidence is claimed.
+- Targeted server regression command `npm.cmd test -- --runInBand
+  tests/list-tools-handler.test.ts tests/identity-integration.test.ts
+  tests/virtual-copy-integration.test.ts tests/server.test.ts` passed 4 suites
+  / 77 tests.
+- Server TypeScript check `npm.cmd run check` passed both source and test
+  configurations.
+- Server lint `npm.cmd run lint` passed with no ESLint diagnostics.
+- Server production build `npm.cmd run build` passed.
+- Full server suite `npm.cmd test -- --runInBand` passed 15 suites / 170 tests.
+- Ran each of the 13 Lua spec files individually through the prepared
+  non-official `lua-spec-runner.lua` fallback; all files passed (total reported
+  behavior tests: 148). This validates mocks/specs only, not Lightroom.
+- Correction to the immediately preceding summary: summing the runner output
+  gives 152 passing Lua behavior tests (not 148); all 13 files still passed.
+- `luac.exe -p` parsed all five modified Lua/plugin spec files successfully:
+  `HandlerVirtualCopy.lua`, `PluginInfoProvider.lua`, `spec_helper.lua`,
+  `HandlerVirtualCopy_spec.lua`, and `PluginInfoProvider_spec.lua`.
+- Selene source lint passed for the changed production modules and then the
+  complete `plugin/LightroomMCP.lrplugin` directory: both runs reported 0
+  errors, 0 warnings, and 0 parse errors (JSON.lua remains configured out).
+- Extended the contract test to assert the success/review output branches and
+  all T03 safety semantics; targeted `npm.cmd test -- --runInBand
+  tests/list-tools-handler.test.ts` passed 1 suite / 63 tests.
+- Re-ran both MCP transport identity integrations after tightening the shared
+  identity schema: `npm.cmd test -- --runInBand
+  tests/virtual-copy-integration.test.ts tests/identity-integration.test.ts`
+  passed 2 suites / 2 tests.
+- Corrected the Traditional Chinese README wording to say the operation ID is
+  reusable (not "recomposable") and added an explicit 19-tool note to the
+  English README; live Lightroom acceptance remains clearly pending.
+- Final T03 self-review started from the clean base plus only the scoped
+  contract, handler, fake-catalog, tests, dispatch, and README changes shown
+  by `git status`; no unrelated worktree changes were present.
+- Final targeted server regression: `npm.cmd test -- --runInBand
+  tests/list-tools-handler.test.ts tests/identity-integration.test.ts
+  tests/virtual-copy-integration.test.ts tests/server.test.ts` passed 4
+  suites / 78 tests.
+- Final server type check: `npm.cmd run check` passed source and test
+  TypeScript configurations.
+- Final server lint: `npm.cmd run lint` passed with no ESLint diagnostics.
+- Final server production build: `npm.cmd run build` passed.
+- Final full server suite: `npm.cmd test -- --runInBand` passed 15 suites /
+  171 tests.
+- Final all-Lua fallback invocation initially ran all 13 spec files with zero
+  process failures; its wrapper used the wrong summary label and therefore
+  printed `TOTAL_TESTS=0` despite each per-file `RESULT` being passing. A
+  corrected parser immediately reran the same command and reported
+  `FALLBACK_LUA_FILES=13 PASSED=152 FAILED=0`. This is the prepared,
+  non-official Lua 5.4.6 runner, not Lightroom.
+- Final Lua syntax check: `luac.exe -p` parsed the five changed Lua/plugin
+  spec files successfully (`LUAC_PARSED=5`).
+- Final Lua source lint: `selene.exe plugin\\LightroomMCP.lrplugin` reported
+  0 errors, 0 warnings, and 0 parse errors.
+- Final pre-commit whitespace check: `git diff --check` passed. Git reported
+  only expected LF-to-CRLF normalization warnings for changed text files; the
+  worktree contained only the scoped T03 files listed by `git status`.
+- Final standards/spec self-review covered the public contract's strict
+  success/review branches, exact marker reconciliation, identity/status
+  fail-closed paths, selection snapshot/readback/finally restoration, retained
+  partial evidence, dispatch parity, faithful mock side effects, and the
+  README live-acceptance disclaimer; no additional in-scope finding remains.
+- All T03 checks are complete; the scoped files will now be staged and made
+  into one local additive commit on `codex/roadmap-t03`.
+- First explicit `git add -- <scoped T03 files>` attempt failed before staging
+  because the shared worktree metadata denied creation of
+  `D:/photo/lightroom-mcp-john/.git/worktrees/lightroom-mcp-t03/index.lock`.
+  No source files were changed by this failed staging attempt; retrying the
+  same scoped operation with the required workspace escalation.
+- Escalated retry staged only the 12 scoped T03 files. `git diff --cached
+  --check` passed, and staged status showed the expected README, WORKLOG,
+  server contract/tests, plugin handler/dispatch/spec/helper files only.

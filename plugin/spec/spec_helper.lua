@@ -80,8 +80,11 @@ end
 -- Build a fake photo with the given metadata table.
 -- meta keys correspond to keys passed to getRawMetadata / getFormattedMetadata / localIdentifier.
 function M.fakePhoto(meta)
-    return {
+    local photo = {
         localIdentifier = meta.localIdentifier or meta.id or "photo-id",
+        -- Test-only access for the fake catalog's faithful Virtual Copy
+        -- mutation. Production handlers never inspect this field.
+        __meta = meta,
         getRawMetadata = function(_, key) return readMetadata(meta, key) end,
         getFormattedMetadata = function(_, key) return readMetadata(meta, key) end,
         getDevelopSettings = function() return meta.developSettings or {} end,
@@ -102,6 +105,7 @@ function M.fakePhoto(meta)
             meta.__appliedSettings = settings
         end,
     }
+    return photo
 end
 
 -- Build a fake collection.
@@ -133,6 +137,20 @@ function M.fakeCatalog(opts)
     local collectionSets = opts.collectionSets or {}
     local createdCollections = {}
     local createdKeywords = {}
+    local createdVirtualCopies = {}
+    local selectedPhotos = opts.targetPhotos or photos
+    local targetPhoto = opts.targetPhoto
+    if targetPhoto == nil and #selectedPhotos > 0 then
+        targetPhoto = selectedPhotos[1]
+    end
+    local activeSources = opts.activeSources or {}
+    local selectedPhotoCalls = {}
+    local activeSourceCalls = {}
+    local createVirtualCopiesCalls = 0
+    local nextLocalIdentifier = opts.nextLocalIdentifier
+    if nextLocalIdentifier == nil then
+        nextLocalIdentifier = #photos + 1
+    end
     local readAccessCount = 0
     local writeAccessCount = 0
     -- Tracks whether a catalog query (getTargetPhotos/findPhotos/getAllPhotos)
@@ -178,9 +196,38 @@ function M.fakeCatalog(opts)
         error("fakeCatalog.findPhotos: unsupported criterion " .. tostring(crit) .. "/" .. tostring(op))
     end
 
-    return {
+    local catalog
+    catalog = {
         getAllPhotos = function() markQuery() return photos end,
-        getTargetPhotos = function() markQuery() return opts.targetPhotos or photos end,
+        getTargetPhotos = function() markQuery() return selectedPhotos end,
+        getTargetPhoto = function() markQuery() return targetPhoto end,
+        getActiveSources = function() return activeSources end,
+        setActiveSources = function(_, sources)
+            table.insert(activeSourceCalls, sources)
+            activeSources = sources
+            if opts.onSetActiveSources then
+                opts.onSetActiveSources(sources, catalog)
+            end
+        end,
+        setSelectedPhotos = function(_, activePhoto, otherSelectedPhotos)
+            table.insert(selectedPhotoCalls, {
+                activePhoto = activePhoto,
+                otherSelectedPhotos = otherSelectedPhotos,
+            })
+            selectedPhotos = {}
+            if activePhoto ~= nil then
+                targetPhoto = activePhoto
+                table.insert(selectedPhotos, activePhoto)
+                for _, photo in ipairs(otherSelectedPhotos or {}) do
+                    table.insert(selectedPhotos, photo)
+                end
+            else
+                targetPhoto = nil
+            end
+            if opts.onSetSelectedPhotos then
+                opts.onSetSelectedPhotos(activePhoto, otherSelectedPhotos, catalog)
+            end
+        end,
         findPhotos = function(_, opts)
             markQuery()
             local desc = opts and opts.searchDesc or {}
@@ -211,6 +258,52 @@ function M.fakeCatalog(opts)
             writeAccessCount = writeAccessCount + 1
             fn()
         end,
+        createVirtualCopies = function(_, copyName)
+            createVirtualCopiesCalls = createVirtualCopiesCalls + 1
+            local source = targetPhoto or selectedPhotos[1]
+            local created
+            if opts.createVirtualCopies then
+                created = opts.createVirtualCopies(copyName, source, catalog)
+            else
+                created = {}
+                if source ~= nil then
+                    local sourceMeta = source.__meta or {}
+                    local copyMeta = {
+                        id = tostring(nextLocalIdentifier),
+                        uuid = "uuid-copy-" .. tostring(nextLocalIdentifier),
+                        path = source:getRawMetadata('path'),
+                        fileName = source:getFormattedMetadata('fileName'),
+                        copyName = copyName,
+                        isVirtualCopy = true,
+                        masterPhoto = source,
+                    }
+                    nextLocalIdentifier = nextLocalIdentifier + 1
+                    local copy = M.fakePhoto(copyMeta)
+                    sourceMeta.virtualCopies = sourceMeta.virtualCopies or {}
+                    table.insert(sourceMeta.virtualCopies, copy)
+                    sourceMeta.countVirtualCopies = #sourceMeta.virtualCopies
+                    table.insert(photos, copy)
+                    table.insert(created, copy)
+                end
+            end
+            created = created or {}
+            for _, copy in ipairs(created) do
+                local alreadyInCatalog = false
+                for _, existing in ipairs(photos) do
+                    if existing == copy then
+                        alreadyInCatalog = true
+                        break
+                    end
+                end
+                if not alreadyInCatalog then table.insert(photos, copy) end
+            end
+            selectedPhotos = created
+            targetPhoto = created[1]
+            for _, copy in ipairs(created) do
+                table.insert(createdVirtualCopies, copy)
+            end
+            return created
+        end,
         findPhotoByLocalIdentifier = function(_, id)
             local target = tostring(id)
             for _, p in ipairs(photos) do
@@ -238,7 +331,19 @@ function M.fakeCatalog(opts)
         getCreatedKeywords = function() return createdKeywords end,
         getReadAccessCount = function() return readAccessCount end,
         getWriteAccessCount = function() return writeAccessCount end,
+        getSelectedPhotoCalls = function() return selectedPhotoCalls end,
+        getActiveSourceCalls = function() return activeSourceCalls end,
+        getCreateVirtualCopiesCalls = function() return createVirtualCopiesCalls end,
+        getCreatedVirtualCopies = function() return createdVirtualCopies end,
+        setTargetPhotosForTest = function(_, target, active)
+            selectedPhotos = target or {}
+            targetPhoto = active
+        end,
+        addPhotoForTest = function(_, photo)
+            table.insert(photos, photo)
+        end,
     }
+    return catalog
 end
 
 return M

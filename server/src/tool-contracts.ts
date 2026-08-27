@@ -59,13 +59,7 @@ export interface ToolContract {
   operationSemantics: OperationSemantics;
 }
 
-interface ToolContractDefinition {
-  name: string;
-  description: string;
-  luaHandler: string;
-  inputSchema: InputSchema;
-  outputSchema?: Tool["outputSchema"];
-}
+type ToolContractDefinition = Omit<ToolContract, "operationSemantics">;
 
 const MAX_BULK_PHOTO_IDS = 1000;
 const MAX_KEYWORDS = 1000;

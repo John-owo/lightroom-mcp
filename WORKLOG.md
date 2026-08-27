@@ -522,3 +522,15 @@ Unverified boundaries:
 - No real Lightroom catalog, SDK cancellation, socket lifecycle, photo
   mutation, UI/visual verification, GitHub write, push, issue closure, or PR
   creation is claimed by this integration verification.
+- Integration post-commit verification `git diff --check 46d3543...HEAD` and
+  `git status --short --branch` passed at `2381d93`; the worktree was clean.
+  This supersedes the earlier sentence that described `git diff --check` as a
+  remaining check.
+- Final Standards review found that `ToolContractDefinition` duplicated the
+  public `ToolContract` fields, which made T01 `outputSchema` and T02
+  `operationSemantics` a future synchronization hazard. Replaced the duplicate
+  declaration with `Omit<ToolContract, "operationSemantics">`; no runtime
+  contract or behavior was changed.
+- Post-refactor targeted verification passed: identity integration plus
+  list-tools contract tests ran 2 suites / 61 tests, and `npm.cmd run check`
+  passed both source and test TypeScript configurations.

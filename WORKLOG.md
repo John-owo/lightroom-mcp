@@ -396,3 +396,91 @@ Unverified boundaries:
   modified on `codex/roadmap-t02`.
 - Next command is the additive commit `git add -- <five follow-up files>` and
   `git commit -m "fix: close T02 review findings (#3)"`.
+
+## T02 worker/server lifecycle re-review (2026-08-27)
+
+- Status correction: the historical note saying `c7dbca2` was the final
+  amend and that the next command was a commit is superseded by `c8714a0`,
+  then by `28e5b46`; no prior commit is being rewritten.
+- Re-review work started additively for explicit queue-worker context cleanup,
+  instance-scoped server loops/sockets/callbacks, and rejection of requests
+  during an old-generation ownership handoff. No live Lightroom mutation is
+  used.
+- Baseline verification (before this red step) with the prepared Lua 5.4.6
+  fallback runner, not official Busted, passed 25 specs. This confirms the
+  existing `28e5b46` behavior before adding the new review tests.
+- TDD red verification: after adding the worker-context cancellation test and
+  switching the implementation seam to `postAsyncTaskWithContext`, the new
+  test reached the expected lifecycle behavior, while the old worker-start
+  failure test failed because it still injected `LrTasks.startAsyncTask`.
+  This is an expected test-fixture update, not a production failure.
+- Verification command typo (failed before process creation): the fallback
+  Lua runner path used `_workspace` instead of `_agent_workspace`; no test
+  result was inferred from that failure.
+- TDD red verification after adding the retained async server-loop test
+  initially exposed the mock socket closure's self-reference bug (the test
+  reached Stop but the stub socket did not mark itself closed). The fixture
+  was corrected to initialize the socket local before its methods.
+- Verification with the corrected fixture: the fallback Lua runner passed 27
+  specs, including worker cleanup cancellation, rapid Stop->Start instance
+  retirement, stale callback rejection, and post-restart request gating.
+- Reviewed the production diff and `PluginInit.lua` lifecycle wiring. A
+  narrow `rg` wildcard probe was invalid on PowerShell (OS error 123); no
+  source change or test claim was based on that failed probe.
+- Verification after the acceptance-gate assertion and coroutine fixture
+  hardening: the fallback Lua runner (not official Busted) passed 27 specs.
+- Verification with Lua 5.4.6 `luac -p` passed for the modified
+  `PluginInfoProvider.lua` and `PluginInfoProvider_spec.lua`.
+- Verification after hardening local-socket usage, stale restart scheduling,
+  and cancellation exception paths: the fallback Lua runner (not official
+  Busted) passed 27 specs.
+- Updated socket teardown to close each handle once across Stop and delayed
+  stale-context cleanup, and added close-count assertions to the retained
+  async-loop test. The fallback Lua runner then passed 27 specs.
+- Added stale-instance guards before the server task mutates shared rebind
+  state and before a delayed response rebind; the fallback Lua runner passed
+  27 specs with server cleanup idempotence assertions.
+- A targeted Lua verification retry used an incorrect `LUA_PATH` that pointed
+  at `lua-spec-runner.lua` instead of the prepared Lua rocks paths and failed
+  with a C stack overflow while resolving `luassert`; this result is
+  discarded and not counted as a test run.
+- Corrected targeted Lua verification with the prepared Lua rocks `LUA_PATH`:
+  fallback runner passed all 27 `PluginInfoProvider_spec.lua` specs.
+- Final Selene 0.31.0 verification after the stale-start and teardown guards:
+  `plugin/LightroomMCP.lrplugin` passed with 0 errors, 0 warnings, and 0 parse
+  errors.
+- Final Lua 5.4.6 `luac -p` verification passed for all plugin and plugin-spec
+  Lua files.
+- Final full Lua fallback verification with the prepared runner (not official
+  Busted) passed 133 specs across all plugin handler, lookup, JSON, lifecycle,
+  and PluginInit suites.
+- Final pre-commit `git diff --check`, `git status --short --branch`, and
+  `git diff --stat HEAD` passed. Only `WORKLOG.md`,
+  `PluginInfoProvider.lua`, and `PluginInfoProvider_spec.lua` are modified on
+  `codex/roadmap-t02`; Git emitted only expected LF/CRLF normalization
+  warnings.
+- Verification `git diff --check` passed; Git emitted only expected LF/CRLF
+  normalization warnings for the three edited text files.
+- Full server verification: `npm.cmd test -- --runInBand` passed 13 suites and
+  163 tests.
+- Final server verification: `npm.cmd run check` passed source and test
+  TypeScript checks.
+- Final server verification: `npm.cmd run lint` passed ESLint for `src` and
+  `tests`.
+- Final server verification: `npm.cmd run build` passed TypeScript build.
+- Enumerated the focused Lua spec files under `plugin/spec` with `rg --files`
+  to prepare a fallback full-plugin run; no generated or source files were
+  touched by the inventory command.
+- Full Lua fallback verification using Lua 5.4.6 and the prepared runner (not
+  official Busted) passed 133 specs across handler, lookup, JSON, lifecycle,
+  and PluginInit spec files.
+- Lua static verification with Selene 0.31.0 on `plugin/LightroomMCP.lrplugin`
+  passed with 0 errors, 0 warnings, and 0 parse errors.
+- Lua 5.4.6 `luac -p` passed for all `.lua` files in `plugin/LightroomMCP.lrplugin`
+  and `plugin/spec`.
+- Verification from `server`: `npm.cmd test -- --runInBand
+  tests/list-tools-handler.test.ts` passed 1 suite and 58 tests.
+- Verification from `server`: `npm.cmd run check` passed TypeScript source and
+  test-config checks.
+- Verification from `server`: `npm.cmd run lint` passed ESLint for `src` and
+  `tests`.

@@ -771,3 +771,15 @@ Unverified boundaries:
   retrying the same scoped add with workspace escalation.
 - Escalated review-fix add staged exactly the five scoped files. `git diff
   --cached --check` passed and staged status contained no unrelated paths.
+- Additive review-fix commit succeeded as `6fcae2d4b9767d05a7141cb4198795d8a647b775`
+  (`fix: return structured review on selection drift (#4)`), containing the
+  handler gate fix, fake metadata-read guard, Lua assertions, MCP transport
+  assertion, and this append-only worklog evidence.
+- Post-commit verification for `6fcae2d4b9767d05a7141cb4198795d8a647b775`:
+  `git rev-parse HEAD` returned that SHA, `git status --short --branch`
+  returned only `## codex/roadmap-t03` (clean), and `git diff --check` passed.
+  This supersedes the earlier pending/staged wording; the review-fix commit is
+  complete and the post-commit worktree was clean at this checkpoint.
+- The append-only final-status correction itself passed `git diff --check`;
+  status showed only the intended WORKLOG modification pending its small
+  follow-up documentation commit.

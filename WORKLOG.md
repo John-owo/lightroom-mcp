@@ -459,6 +459,9 @@ Unverified boundaries:
   `PluginInfoProvider.lua`, and `PluginInfoProvider_spec.lua` are modified on
   `codex/roadmap-t02`; Git emitted only expected LF/CRLF normalization
   warnings.
+- Additive fix commit completed as `ab8e87f` (`fix: harden T02 worker
+  lifecycle (#3)`). This records the post-review implementation and does not
+  rewrite `c8714a0` or `28e5b46`.
 - Verification `git diff --check` passed; Git emitted only expected LF/CRLF
   normalization warnings for the three edited text files.
 - Full server verification: `npm.cmd test -- --runInBand` passed 13 suites and

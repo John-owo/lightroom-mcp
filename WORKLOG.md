@@ -955,3 +955,201 @@ Unverified boundaries:
   `D:/photo/lightroom-mcp-john/.git/worktrees/lightroom-mcp-roadmap-integration/index.lock`
   (`Permission denied`); no commit was created and no unrelated path was
   touched.
+
+## 2026-08-28 - T04 live retry remains blocked at Lightroom startup
+
+- Re-read the workspace instructions, the PhotoAgent and Lightroom MCP
+  integration work logs, the T04 GitHub issue, and the current v0.1 dependency
+  frontier before acting. T04 remains the mandatory live boundary before
+  PhotoAgent T07; T07 is still natively blocked by T04 and T06.
+- Read-only GitHub issue #5 confirmed the exact live evidence contract:
+  Workflow Copy creation and identity, response-loss reconciliation, selection
+  restoration, failure handling, unchanged Master Develop State, unchanged
+  source hash/timestamp and sidecar state, plus a Lightroom-rendered result and
+  explicit unverified boundaries.
+- Initial preflight again found no Lightroom process and no connections or
+  listeners on ports 58763/58764. The first sandboxed GitHub issue read failed
+  on denied network socket access; its approved read-only retry succeeded.
+- The `computer-use` initialization failed before any UI action with
+  `Importing module "node:process" is not allowed in node_repl`. No stale
+  screenshot coordinate, accessibility index, or UI input was used.
+- The first narrow installed-path probe command had a PowerShell empty-pipe
+  parser error and changed nothing. Its corrected rerun found the existing
+  executable at `C:\Program Files\Adobe\Adobe Lightroom Classic\Lightroom.exe`.
+- Launched that existing Lightroom executable once through the approved GUI
+  boundary. Subsequent read-only checks found three responding Lightroom
+  processes but zero main windows and zero MCP sockets. Adobe Crash Processor
+  was also present. No Lightroom catalog, photo, plug-in, preset, or source file
+  was selected or changed.
+- Two bounded wait commands returned without usable output, so neither is
+  counted as verification. Explicit follow-up readback reported
+  `ProcessCount=3`, `WindowCount=0`, and `SocketCount=0`.
+- Targeted log inspection found no current launch or plug-in entry. The
+  existing `Documents\LrClassicLogs\LightroomMCP.log` ends at 2026-08-26 and
+  therefore cannot establish connectivity for this run. The targeted
+  `Get-CimInstance Win32_Process` query failed with access denied and changed
+  nothing.
+- Decision: T04 cannot be honestly executed while Lightroom exposes no usable
+  window and the plug-in exposes no sockets. T07 is not started because doing
+  so would bypass its explicit P0 dependency. No code, test, catalog, Develop
+  State, photo, sidecar, render, GitHub issue, branch, or remote state changed.
+
+### 2026-08-28 post-reboot continuation
+
+- After the user rebooted and asked to continue, read-only preflight reported
+  zero Lightroom processes, zero windows, and zero sockets. Both integration
+  worktrees retained their prior state: PhotoAgent was clean and this worktree
+  had only the preceding append-only WORKLOG entry.
+- The MCP log showed that the previous launch had reached plug-in bootstrap at
+  22:16:32, then shut down at 22:16:53 without processing any request. This
+  supersedes the earlier lack-of-current-log observation but does not establish
+  a successful catalog or photo operation.
+- Relaunched the existing Lightroom executable once after the reboot. The user
+  supplied a screenshot showing Lightroom repairing `Lightroom Catalog-v13-5`;
+  no Cancel action or other UI input was sent.
+- Repeated bounded read-only monitoring found one responding Lightroom process,
+  zero main windows, zero MCP sockets, and no newer plug-in log entry through
+  22:23:15. Two wait commands yielded before their final output; explicit
+  session polling completed them and confirmed the same state.
+- T04 remains paused until Lightroom finishes catalog repair and exposes a
+  usable main window and plug-in sockets. No code, catalog command, photo
+  selection, Workflow Copy, Develop mutation, render, sidecar write, GitHub
+  write, staging, or commit occurred in this continuation.
+
+## 2026-08-28 - Lightroom catalog-repair incident isolation
+
+- Stopped roadmap implementation and used the systematic debugging workflow
+  after the user reported that the repair dialog made no progress and suspected
+  an agent-caused Lightroom change. No feature work continued during triage.
+- Targeted preference-file inspection failed with Windows access denied and
+  changed nothing. A narrow search of the known catalog roots located the
+  active catalog at
+  `C:\Users\John\Pictures\Lightroom\Lightroom Catalog-v13-5.lrcat`; no
+  catalog was found under the shallow `E:\Lr` root inspection.
+- Artifact readback found the main `.lrcat` at 7,258,112 bytes with last write
+  22:16:54, no `.lock`, WAL, SHM, repair, or temporary artifact beside it, and
+  a Lightroom-created 22:16 backup ZIP. The 22:16, 8/25, and 8/24 backup ZIPs
+  were inspected read-only; they contain both `.lrcat` and `.lrcat-data`.
+- Python SQLite read-only immutable-mode `PRAGMA quick_check` and full
+  `PRAGMA integrity_check` both returned `ok` for the original catalog before
+  any process termination. This checks the SQLite catalog, not Adobe's separate
+  `.lrcat-data` store.
+- Process sampling showed the original repair process nearly idle: CPU advanced
+  only about 0.02 seconds over ten seconds, the catalog timestamp did not move,
+  and no plug-in socket or new MCP log entry appeared. Windows Application log
+  inspection returned no matching Lightroom hang/error event.
+- Escalated read-only `Win32_Process` inspection identified two independent
+  Lightroom launches: PID 18420 from the agent's approved `Start-Process` call
+  at 22:19 and PID 6336 from Explorer at 22:29. The non-escalated process-parent
+  query and `tasklist /v` attempts had failed with access denied and changed
+  nothing.
+- Ended only the later, idle PID 6336 first. Source catalog hash, size, and
+  timestamp remained unchanged; PID 18420 did not recover. After the original
+  catalog remained unwritten and idle for more than 20 minutes, created a
+  non-overwriting safety snapshot at
+  `D:\photo\_agent_workspace\lightroom\catalog-recovery\20260828-2240-pre-stuck-restart`
+  and then ended PID 18420.
+- Safety snapshot verification passed: source and copy `.lrcat` SHA-256 are
+  `234D17440CCD1ED8726EC62E5FB42E280C4F796C58A3565454B5A25713F7E645`,
+  both are 7,258,112 bytes, and the `.lrcat-data` trees match by relative path,
+  size, file count, and aggregate bytes. The snapshot also preserves the MCP
+  log. A Luna worker independently repeated this read-only verification.
+- After PID 18420 termination, the original catalog hash, size, and timestamp
+  were unchanged; read-only quick/full SQLite integrity checks remained `ok`
+  and there were no residual lock/WAL/SHM/repair files.
+- Relaunching the original catalog by explicit full path reproduced the same
+  no-main-window/no-socket state. PID 2756 was ended only after its catalog
+  hash/size/timestamp remained unchanged; the same values remained unchanged
+  after termination.
+- Extracted the Lightroom-created 22:16 backup into the new isolated test path
+  `D:\photo\_agent_workspace\lightroom\catalog-recovery\20260828-2216-backup-open-test`.
+  The extracted `.lrcat` is 7,319,552 bytes, SHA-256
+  `4B3C1F6F0D1126B9994155383CFBA012F8CF334F32CA48BE451F7DA0A421856A`,
+  and passed read-only quick/full SQLite integrity checks.
+- Opening only that backup copy produced substantial initialization work in
+  the isolated directory: Lightroom created its lock/WAL/SHM, Helper, Previews,
+  and Sync artifacts and used up to about 5.7 GB private memory. It later
+  became low-activity without a usable plug-in socket. Two test-only Lightroom
+  processes were ended after bounded observation; each termination left the
+  original catalog hash, size, and timestamp unchanged. The generated backup
+  test copy and its artifacts were retained for evidence; nothing was deleted.
+- Adobe's current official troubleshooting guidance was checked. It recommends
+  an Alt-launch catalog picker and a brand-new empty catalog to distinguish a
+  catalog problem from an application/startup problem, followed by backup
+  restore or application/GPU troubleshooting based on that result. The next
+  required step is the user-visible Alt-launch empty-catalog test because the
+  available Computer Use runtime fails before input with the recorded
+  `node:process` restriction.
+- Current boundary: zero Lightroom processes remain; the original catalog and
+  photos were not overwritten, replaced, moved, renamed, or deleted. T04 and
+  PhotoAgent T07 remain paused until Lightroom can open a catalog normally.
+- Created the empty, non-catalog destination
+  `D:\photo\_agent_workspace\lightroom\catalog-recovery\blank-startup-test`
+  for the user-visible Alt-launch `Create a New Catalog` isolation step. The
+  directory contained zero items at creation; no catalog was created
+  automatically.
+
+## 2026-08-29 - live MCP recovery and T04 version-boundary check
+
+- The user supplied a current Lightroom MCP status screenshot reporting
+  `Running: true`, both sockets connected, request port 58763, response port
+  58764, and no startup error. A live read-only `get_selected_photos` call then
+  succeeded, establishing usable MCP connectivity in this Codex task.
+- The selected catalog item is `D:\star\1\star_去星背景_缩星.tif` (photo id
+  `1010116`). It has not been designated as the non-critical T04 test photo, so
+  no metadata capture, Workflow Copy creation, Develop mutation, render, or
+  catalog write was attempted.
+- Windows `Get-NetTCPConnection` returned no matching connection even though the
+  MCP read succeeded. The screenshot log path
+  `E:\Users\John\Documents\LrClassicLogs\LightroomMCP.log` was not present at
+  that exact path, so neither check is counted against the direct MCP proof.
+- Runtime tool inspection found no `create_virtual_copy` operation. Targeted
+  source comparison confirmed the operation exists in this integration
+  worktree's `server/src/tool-contracts.ts` and plugin dispatch, but not in the
+  configured `D:\photo\lightroom-mcp-john` checkout. The configured active
+  backend is therefore an older contract and cannot execute T04.
+- A narrow default Plug-ins/Modules path check found no copied plug-in bundle;
+  no broad filesystem scan followed. No plug-in, server config, catalog, photo,
+  source, sidecar, preview, branch, issue, or remote state changed.
+- `git diff --check` passed after this record with only the normal LF-to-CRLF
+  warning; status showed only this intended append-only `WORKLOG.md` change.
+
+## 2026-08-29 - authorized integration backend switch prepared
+
+- The user designated `DSC_5343.NEF` as the non-critical T04 target and
+  authorized switching to this integration build. Live search found exactly one
+  catalog match at `E:\Lr\2026\2026-07-25\DSC_5343.NEF` (id `976310`).
+  Read-only metadata/develop capture succeeded; no identity-safe mutation was
+  attempted through the old contract.
+- A delegated narrow inventory confirmed this branch is `codex/roadmap-integration`
+  at `d56bc26`; integration `node_modules`, dist, `HandlerVirtualCopy.lua`,
+  `PhotoIdentity.lua`, `create_virtual_copy` contract, and plugin dispatch are
+  present. The dirty configured checkout was preserved without merge, reset,
+  copy, or overwrite.
+- Official Codex config reference confirms trusted project overrides and stdio
+  MCP `command`/`args`. Parsed user/project configs both pointed to the old dist;
+  project scope correctly owned `default_permissions="photo-lightroom"` and
+  the matching permission profile.
+- The first PowerShell backup command failed at parse time on an empty pipeline
+  and changed nothing. The corrected command created non-overwriting backups
+  `C:\Users\John\.codex\config.toml.backup-20260829-014936-297` and
+  `D:\photo\.codex\config.toml.backup-20260829-014936-297`; source/backup size
+  and SHA-256 matched for both.
+- The first project-config patch temporarily appended a second `args` key. It
+  was detected before any restart/process use and immediately corrected by
+  deleting the old key. Real TOML parsing then passed for both configs and an
+  exact line diff showed only the intended project Lightroom path replacement;
+  the user config hash remained unchanged and permission scope did not drift.
+- Fresh automated verification on this integration server passed: `npm.cmd test
+  -- --runInBand` reported 15 suites / 172 tests; `npm.cmd run check`,
+  `npm.cmd run lint`, and `npm.cmd run build` completed with exit code 0.
+- Recent Codex SQLite log inspection found no current fatal permission/config
+  precedence error. Several exploratory log queries failed before useful output
+  because of PowerShell/Python quoting or console encoding; corrected read-only
+  queries succeeded and changed no config or project file.
+- Final `git diff --check` passed with only the normal LF-to-CRLF warning;
+  status showed only the pre-existing/current append-only `WORKLOG.md` change.
+  The required remaining boundary is manual Plug-in Manager load/reload/start of
+  this worktree's `plugin\LightroomMCP.lrplugin`, followed by a full Codex
+  restart. No catalog mutation, Workflow Copy, render, source/sidecar change,
+  plugin installation, GitHub write, push, or issue closure occurred.

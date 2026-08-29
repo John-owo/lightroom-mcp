@@ -1374,3 +1374,12 @@ Unverified boundaries:
   dropped-response transport fault was not injected; the fixed-id second call
   proves the required reconciliation path. GitHub issue/branch publication and
   human creative QA remain explicitly unverified and were not changed.
+
+## 2026-08-30 - authorized GitHub branch publication
+
+- User explicitly authorized pushing the current version to GitHub. A normal,
+  non-force push created `origin/codex/roadmap-integration` and configured the
+  local integration branch to track it.
+- The push included the locally committed T01-T04 integration and live T04
+  acceptance record. No merge, issue closure/update, milestone change, pull
+  request creation, or push to `upstream` occurred.

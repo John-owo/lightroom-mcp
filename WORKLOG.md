@@ -1205,3 +1205,172 @@ Unverified boundaries:
   state changed.
 - Final `git diff --check` passed with only the normal LF-to-CRLF warning;
   status showed only this append-only `WORKLOG.md` update.
+
+## 2026-08-29 - new Lightroom process lacks the integration plug-in
+
+- After the next clean Codex reload, runtime enumeration succeeded and exposed
+  the complete integration contract, including `create_virtual_copy`, stable
+  UUID identity, Master/Virtual Copy relations, and path-rejecting photo IDs.
+- The first live read-only `search_photos(filename="5343")` call failed with
+  `Lightroom plugin not connected`; no catalog operation or mutation occurred.
+- Lightroom process evidence shows a new application instance started at
+  23:30:58, while `LightroomMCP.log` contains no `PluginInit`, bind, or socket
+  event after the prior 23:03 session. Codex heartbeat logs likewise report a
+  dropped request socket. The new Lightroom process therefore has not loaded
+  and started the integration plug-in.
+- Codex tool discovery is now complete and must not be restarted again. The
+  remaining manual boundary is to load/reload the integration bundle in this
+  Lightroom process, click Start exactly once, close Plug-in Manager, and leave
+  both applications running. Master/source/catalog state remains untouched.
+
+## 2026-08-29 - live identity readback proves old plug-in path is still active
+
+- The bridge became callable and a live search again found exactly one
+  `DSC_5343.NEF` at catalog id `976310`. The subsequent read-only metadata call
+  returned the expected RAW/develop baseline but omitted every required new
+  identity field: `uuid`, `catalog_id`, `is_virtual_copy`, `master_uuid`, and
+  `virtual_copies`.
+- Targeted integration-source inspection confirms this branch's
+  `HandlerMetadata.lua` calls `PhotoIdentity.enrich`, which emits those fields.
+  The response therefore cannot be counted as the integration identity
+  contract, and `create_virtual_copy` was not called.
+- The bridge log shows the old stale-panel start/stop race once more at
+  23:41:02-23:41:05, followed by a successful manual start and stable sockets at
+  23:41:17-23:41:18; search and metadata requests both completed afterward.
+- The first sandboxed Lightroom Preferences search failed with access denied.
+  An approved read-only retry succeeded and proved the registered/selected
+  plug-in path is the old installed copy at
+  `C:\Users\John\AppData\Roaming\Adobe\Lightroom\Modules\LightroomMCP.lrplugin`,
+  not this integration worktree bundle.
+- Required manual boundary: unregister the old path in Plug-in Manager, Add the
+  exact integration bundle, let auto-start run without pressing the stale
+  Start/Stop control, close the manager, and keep Codex/Lightroom running. No
+  photo, catalog, sidecar, preview, configuration, or source changed.
+
+## 2026-08-29 - old standard Modules plug-in cannot be removed in-app
+
+- The user reported that Lightroom Plug-in Manager would not remove the old
+  plug-in. Read-only inspection confirms it is a normal directory in Lightroom's
+  standard per-user `AppData\Roaming\Adobe\Lightroom\Modules` location; reading
+  its `Info.lua` was denied by the current sandbox, while the integration
+  `Info.lua` remained readable and identifies `com.lightroom.mcp` v0.10.0.
+- Current Adobe Lightroom Classic documentation confirms plug-ins in the
+  Windows per-user Modules folder are automatically loaded and can be enabled
+  or disabled in Plug-in Manager, but cannot be removed there. The disabled
+  Remove control is therefore expected, not a Lightroom error.
+- Because the old and integration bundles share the same toolkit identifier,
+  the safe manual switch is to quit Lightroom, move the old bundle out of
+  Modules to a retained backup, copy the integration bundle into the canonical
+  Modules path, then reopen Lightroom and let it auto-start. No automated
+  install, overwrite, delete, catalog change, or photo mutation was performed.
+
+## 2026-08-29 - integration identity passed, duplicate plug-ins destabilized sockets
+
+- Live `get_photo_metadata` for Master id `976310` returned the integration-only
+  identity contract: UUID `5C9ABCF7-2CE5-4B6E-B55B-CD0315D8B784`, matching
+  Master UUID, `is_virtual_copy=false`, and zero Virtual Copies. This proves the
+  new plug-in loaded successfully despite the old entry remaining visible.
+- Pre-mutation source evidence for `DSC_5343.NEF` recorded SHA-256
+  `E8BD9B1F59D5D0DFC431674E28BA981B548640BC32FBEAF8D569B6F4760E418A`,
+  size 19126784 bytes, last-write UTC `2026-07-25 07:57:02`, and no adjacent
+  XMP sidecar.
+- The first `create_virtual_copy` attempt used fixed operation id
+  `t04-976310-20260829-v1` but returned transport-level `plugin not connected`.
+  The Lightroom log contains no matching create request, so no catalog mutation
+  reached the plug-in and the same operation id remains the only safe retry.
+- Log evidence at 23:51:22-23:51:26 shows two server startups followed by
+  `Auth failed (token mismatch)`, consistent with old and new bundles sharing
+  the same toolkit identifier and running concurrently. T04 remains blocked on
+  retaining only one active bundle; no photo, sidecar, Develop, or catalog
+  mutation is counted.
+
+## 2026-08-29 - old auto-loaded bundle archived reversibly
+
+- After the user closed Lightroom, process verification returned
+  `LIGHTROOM_PROCESS=absent` before any filesystem change.
+- The exact old auto-loaded bundle
+  `C:\Users\John\AppData\Roaming\Adobe\Lightroom\Modules\LightroomMCP.lrplugin`
+  was moved, not deleted, to
+  `D:\photo\_agent_workspace\archives\lightroom-plugins\LightroomMCP-old-20260829-235453.lrplugin`.
+  The non-overwriting backup contains the same 18 files; the old Modules path
+  no longer exists.
+- Old `Info.lua` SHA-256 was
+  `602233A6211B0B938BE1EE59A730FB457C812A8CEF850F903167CFF5B146929C` and
+  old `PluginInit.lua` SHA-256 was
+  `B617C503EF5E51B4984FA71619CE82DE4A684C9347427FB85D7D841D2C1E0479`.
+  The retained integration bundle still exists with different hashes
+  `7AAC2BD1B3CB2AE2F69517108039CFC3CE600621FD146F72507BB688FF5C346C`
+  and `80D61D4CD418155CE49FA2120A832F75071EFC4DB3257E1839E100C33C449067`.
+- Verification command completed successfully with source absent, backup
+  present, equal file counts, and new bundle present. Lightroom restart and a
+  live read-only request remain pending; no catalog or photo mutation occurred.
+- `git diff --check` passed with only the pre-existing LF-to-CRLF warning;
+  `git status --short` reports only this append-only `WORKLOG.md` modification.
+
+## 2026-08-30 - single-bundle restart is stable but server not started
+
+- After the user reopened Lightroom, process id `3828` was live with start time
+  23:56:47. The log contains no new duplicate bootstrap or token-mismatch event
+  after this launch, confirming the archived old Modules bundle did not reload.
+- No new integration socket startup appeared, and live read-only
+  `get_photo_metadata(976310)` returned `Lightroom plugin not connected`.
+  `create_virtual_copy` was not called; fixed operation id
+  `t04-976310-20260829-v1` remains pending and no catalog/photo mutation occurred.
+- Manual boundary: select the integration bundle in Plug-in Manager, click
+  Start Server exactly once, close the manager, and leave Lightroom running.
+
+## 2026-08-30 - T04 live create and reconciliation core passed
+
+- One integration server remained connected after the final manual start. Live
+  read-only metadata for Master `976310` returned UUID
+  `5C9ABCF7-2CE5-4B6E-B55B-CD0315D8B784`, `is_virtual_copy=false`, and zero
+  existing Virtual Copies.
+- Immediately before mutation, `DSC_5343.NEF` still had SHA-256
+  `E8BD9B1F59D5D0DFC431674E28BA981B548640BC32FBEAF8D569B6F4760E418A`,
+  size 19126784, last-write UTC `2026-07-25T07:57:02.8200000Z`, and no adjacent
+  XMP sidecar.
+- `create_virtual_copy` with the retained fixed operation id
+  `t04-976310-20260829-v1` returned `result=created`, copy catalog id `1011125`,
+  copy UUID `D36AFFEC-A7BC-4530-9DE5-10FFBAD415D8`, and verified selection
+  restoration `status=restored`.
+- Master/copy readback proved one exact sibling, copy-to-Master UUID/id linkage,
+  `is_virtual_copy=true` only on the copy, and identical exposed Develop state.
+  Repeating the same operation id returned `result=reconciled` for the same copy
+  with no second creation; final Master readback still reports exactly one copy.
+- Post-reconciliation source verification matched the same hash, size, creation
+  and last-write timestamps, and absent-XMP state. No Master Develop setting was
+  changed. Remaining T04 ticket clauses must be checked before marking the live
+  gate complete.
+
+## 2026-08-30 - T04 live gate completed locally
+
+- Sandboxed `gh issue view 5` failed because GitHub network access was denied;
+  the approved read-only retry succeeded and confirmed the open ticket's exact
+  three acceptance clauses were unchanged.
+- Live failure handling used Master `976310` with a deliberately incorrect
+  expected UUID and distinct operation id
+  `t04-976310-20260830-wrong-uuid-v1`. The plug-in rejected it with
+  `Source UUID mismatch` before mutation. Follow-up Master readback still showed
+  exactly one Virtual Copy, and selected-photo readback returned the restored
+  pre-operation photo `976305`.
+- Exported Workflow Copy `1011125` through Lightroom as one 2048-wide quality-90
+  JPEG into the newly created, initially empty directory
+  `D:\photo\_agent_workspace\lightroom\verification\t04-live-dsc-5343-20260830-0006`.
+  The output `DSC_5343.jpg` is 608915 bytes with SHA-256
+  `69EB4B4331CA5C5203CFFF0D4B391AF11C6813522FEC831E4A9E1FC2B4F604D8`.
+  Direct image inspection confirmed a valid, nonblank Lightroom render of the
+  expected squirrel photo; this is transport/basic-integrity evidence, not a
+  creative-style acceptance claim.
+- Final Master readback preserved UUID, `is_virtual_copy=false`, the complete
+  exposed baseline Develop values, and one exact sibling. Final RAW evidence
+  again matched SHA-256
+  `E8BD9B1F59D5D0DFC431674E28BA981B548640BC32FBEAF8D569B6F4760E418A`,
+  size 19126784, both timestamps, and absent XMP. The stable plug-in log records
+  create, reconciliation, rejected UUID mismatch, selection readback, export,
+  and final metadata without a new token mismatch or disconnect.
+- Local T04 acceptance is complete for creation, identity, response-loss-style
+  fixed-id reconciliation, selection restoration, fail-closed error handling,
+  unchanged Master/source/sidecar state, and Lightroom-rendered output. A real
+  dropped-response transport fault was not injected; the fixed-id second call
+  proves the required reconciliation path. GitHub issue/branch publication and
+  human creative QA remain explicitly unverified and were not changed.

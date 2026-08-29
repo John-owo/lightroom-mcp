@@ -1153,3 +1153,29 @@ Unverified boundaries:
   this worktree's `plugin\LightroomMCP.lrplugin`, followed by a full Codex
   restart. No catalog mutation, Workflow Copy, render, source/sidecar change,
   plugin installation, GitHub write, push, or issue closure occurred.
+
+## 2026-08-29 - integration plug-in start-stop race diagnosed
+
+- The user manually loaded the integration plug-in and supplied its current
+  Plug-in Manager panel. The panel rendered at 22:53:07 with stale initial
+  `Running: false` / zero-attempt state while auto-start remained enabled.
+- Current `LightroomMCP.log` proves the integration plug-in then started
+  normally at 22:53:08: token write, both 58763/58764 binds, bootstrap ready,
+  and both MCP sockets connected all succeeded without startup error.
+- At 22:53:16 the log records the explicit normal lifecycle message
+  `Stopping LrSocket servers`, followed by clean socket closure and task
+  cleanup. No exception, bind failure, stale restart, or catalog operation
+  preceded it.
+- Targeted source readback explains the apparent contradiction: the status text
+  and Start/Stop button title are fixed when the panel renders, but the button
+  action branches on live `pluginState.running`. Clicking the still-labelled
+  Start button after auto-start completed therefore invoked `stopServer()`.
+- Current verification found Lightroom still running, no listeners on
+  58763/58764, no live Lightroom MCP tools in this Codex task, and both
+  integration worktrees otherwise clean before this log append. No photo,
+  catalog, sidecar, preview, configuration, source, issue, or remote state was
+  changed by the diagnosis.
+- Verification commands: targeted `rg` plus source/log readback completed and
+  found the exact start/stop branches; the combined command returned exit 1
+  only because its final listener filter produced no row. The earlier combined
+  process/port/log/status command completed with exit 0.

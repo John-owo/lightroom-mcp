@@ -1179,3 +1179,29 @@ Unverified boundaries:
   found the exact start/stop branches; the combined command returned exit 1
   only because its final listener filter produced no row. The earlier combined
   process/port/log/status command completed with exit 0.
+
+## 2026-08-29 - Codex tool-registration startup race isolated
+
+- The user restarted/continued after manually starting the integration bridge.
+  Current plug-in evidence shows a successful start at 23:03:34, both sockets
+  connected by 23:03:36, and no later explicit Stop or plug-in exception.
+- This Codex thread began before that successful plug-in start. Codex's stdio
+  server connected only near the configured 60-second startup boundary; its
+  first heartbeat then exceeded the 10-second dispatcher wait and logged
+  `Plugin response timeout`, followed by a late `Response for unknown id`.
+- Runtime tool enumeration and a direct read-only lookup both confirmed
+  `mcp__lightroom__search_photos` / `create_virtual_copy` are not callable in
+  this already-initialized model turn. No raw-TCP or guessed-schema mutation was
+  attempted as a workaround.
+- `PluginInfoProvider loaded` at 23:03:50 establishes that Plug-in Manager was
+  opened while the bridge was connected. The first heartbeat timeout followed;
+  the clean retry condition is therefore to close this modal panel completely,
+  keep Lightroom on its normal catalog UI with the bridge already running, and
+  then restart Codex so tool discovery begins against a ready plug-in.
+- The first combined skill/config/SQLite command failed at PowerShell parse time
+  and changed nothing. Corrected separate read-only commands passed; project
+  config still points exactly to the integration dist with a 60-second startup
+  timeout. No photo, catalog, sidecar, preview, config, source, issue, or remote
+  state changed.
+- Final `git diff --check` passed with only the normal LF-to-CRLF warning;
+  status showed only this append-only `WORKLOG.md` update.

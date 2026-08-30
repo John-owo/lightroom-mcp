@@ -1,5 +1,6 @@
 local LrApplication = import 'LrApplication'
 
+local PhotoIdentity = require 'PhotoIdentity'
 local Log = require 'Log'
 
 local SearchHandler = {}
@@ -76,13 +77,13 @@ local function buildSearchDesc(args)
 end
 
 local function buildResult(photo)
-    return {
+    return PhotoIdentity.enrich({
         id = photo.localIdentifier,
         path = photo:getRawMetadata('path'),
         filename = photo:getFormattedMetadata('fileName'),
         rating = photo:getRawMetadata('rating'),
         dateTimeOriginal = photo:getFormattedMetadata('dateTimeOriginal'),
-    }
+    }, photo)
 end
 
 function SearchHandler.searchPhotos(args)

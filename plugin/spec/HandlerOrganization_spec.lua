@@ -39,7 +39,7 @@ describe("HandlerOrganization.setRating", function()
 
     it("skips unknown photos silently", function()
         local _, Handler = setup({ photos = {} })
-        local r = Handler.setRating({ photo_ids = { "missing" }, rating = 2 })
+        local r = Handler.setRating({ photo_ids = { "999" }, rating = 2 })
         assert.are.equal(0, r.updated)
     end)
 end)

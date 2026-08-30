@@ -16,6 +16,7 @@ describe("HandlerMetadata.getPhotoMetadata", function()
             id = "42",
             path = "/p/sunset.jpg",
             fileName = "sunset.jpg",
+            isVirtualCopy = false,
             rating = 5,
             colorNameForLabel = "red",
             pickStatus = 1,
@@ -38,11 +39,87 @@ describe("HandlerMetadata.getPhotoMetadata", function()
         assert.are.same({ "summer", "beach" }, r.keywords)
     end)
 
+    it("returns persistent identity and distinguishes virtual copies sharing a source path", function()
+        local masterMeta = {
+            id = "100",
+            uuid = "uuid-master",
+            path = "/相片/夕陽.jpg",
+            fileName = "夕陽.jpg",
+            copyName = "",
+            isVirtualCopy = false,
+        }
+        local master = helper.fakePhoto(masterMeta)
+        local copyOne = helper.fakePhoto({
+            id = "101",
+            uuid = "uuid-copy-one",
+            path = "/相片/夕陽.jpg",
+            fileName = "夕陽.jpg",
+            copyName = "暖色版本",
+            isVirtualCopy = true,
+            masterPhoto = master,
+        })
+        local copyTwo = helper.fakePhoto({
+            id = "102",
+            uuid = "uuid-copy-two",
+            path = "/相片/夕陽.jpg",
+            fileName = "夕陽.jpg",
+            copyName = "冷色版本",
+            isVirtualCopy = true,
+            masterPhoto = master,
+        })
+        masterMeta.virtualCopies = { copyOne, copyTwo }
+        masterMeta.countVirtualCopies = 2
+        local _, Handler = setup({ master, copyOne, copyTwo })
+
+        local masterResult = Handler.getPhotoMetadata({ photo_id = "100" })
+        local copyResult = Handler.getPhotoMetadata({ photo_id = "101" })
+
+        assert.are.equal("100", masterResult.catalog_id)
+        assert.are.equal("uuid-master", masterResult.uuid)
+        assert.is_false(masterResult.is_virtual_copy)
+        assert.are.equal(2, masterResult.virtual_copy_count)
+        assert.are.equal("101", masterResult.virtual_copies[1].catalog_id)
+        assert.are.equal("uuid-copy-one", masterResult.virtual_copies[1].uuid)
+        assert.are.equal("暖色版本", masterResult.virtual_copies[1].copy_name)
+        assert.are.equal("102", masterResult.virtual_copies[2].catalog_id)
+        assert.are.equal("uuid-copy-two", masterResult.virtual_copies[2].uuid)
+        assert.are.equal("冷色版本", masterResult.virtual_copies[2].copy_name)
+
+        assert.are.equal("101", copyResult.catalog_id)
+        assert.are.equal("uuid-copy-one", copyResult.uuid)
+        assert.is_true(copyResult.is_virtual_copy)
+        assert.are.equal("100", copyResult.master.catalog_id)
+        assert.are.equal("uuid-master", copyResult.master.uuid)
+    end)
+
+    it("fails closed when virtual-copy status is missing or malformed", function()
+        local cases = {
+            { id = "201", status = nil },
+            { id = "202", status = "false" },
+        }
+        for _, case in ipairs(cases) do
+            local meta = {
+                id = case.id,
+                uuid = "uuid-uncertain-" .. case.id,
+                path = "/p/uncertain-" .. case.id .. ".jpg",
+                fileName = "uncertain-" .. case.id .. ".jpg",
+            }
+            if case.status ~= nil then meta.isVirtualCopy = case.status end
+            local photo = helper.fakePhoto(meta)
+            local _, Handler = setup({ photo })
+
+            assert.has_error(function()
+                Handler.getPhotoMetadata({ photo_id = case.id })
+            end)
+        end
+    end)
+
     it("exposes HSL develop settings with SDK keys", function()
         local photo = helper.fakePhoto({
             id = "43",
             path = "/p/portrait.jpg",
             fileName = "portrait.jpg",
+            isVirtualCopy = false,
             developSettings = {
                 HueAdjustmentRed = -8,
                 SaturationAdjustmentOrange = -15,
@@ -63,6 +140,7 @@ describe("HandlerMetadata.getPhotoMetadata", function()
             id = "44",
             path = "/p/no-hsl.jpg",
             fileName = "no-hsl.jpg",
+            isVirtualCopy = false,
             developSettings = { Exposure2012 = 0.25 },
         })
         local _, Handler = setup({ photo })
@@ -77,6 +155,7 @@ describe("HandlerMetadata.getPhotoMetadata", function()
             id = "7",
             path = "/p/street.jpg",
             fileName = "street.jpg",
+            isVirtualCopy = false,
             title = "Main Street",
             caption = "Downtown at dusk",
             headline = "Evening commute",
@@ -109,7 +188,10 @@ describe("HandlerMetadata.getPhotoMetadata", function()
     end)
 
     it("omits gps, location, and copyright groups when empty", function()
-        local photo = helper.fakePhoto({ id = "8", path = "/p/no-gps.jpg", fileName = "no-gps.jpg" })
+        local photo = helper.fakePhoto({
+            id = "8", path = "/p/no-gps.jpg", fileName = "no-gps.jpg",
+            isVirtualCopy = false,
+        })
         local _, Handler = setup({ photo })
 
         local r = Handler.getPhotoMetadata({ photo_id = "8" })
@@ -119,7 +201,9 @@ describe("HandlerMetadata.getPhotoMetadata", function()
     end)
 
     it("omits the gps group when the raw table carries no coordinates", function()
-        local photo = helper.fakePhoto({ id = "10", fileName = "empty-gps.jpg", gps = {} })
+        local photo = helper.fakePhoto({
+            id = "10", fileName = "empty-gps.jpg", isVirtualCopy = false, gps = {},
+        })
         local _, Handler = setup({ photo })
 
         local r = Handler.getPhotoMetadata({ photo_id = "10" })
@@ -134,22 +218,24 @@ describe("HandlerMetadata.getPhotoMetadata", function()
         assert.has_no.errors(function() photo:getFormattedMetadata("copyrightState") end)
     end)
 
-    it("falls back to lookup by path when local id misses", function()
+    it("rejects path-only identity even when the path is unique", function()
         local photo = helper.fakePhoto({
             id = "99",
             path = "/match-by-path.jpg",
             fileName = "f.jpg",
+            isVirtualCopy = false,
         })
         local _, Handler = setup({ photo })
 
-        local r = Handler.getPhotoMetadata({ photo_id = "/match-by-path.jpg" })
-        assert.are.equal("/match-by-path.jpg", r.path)
+        assert.has_error(function()
+            Handler.getPhotoMetadata({ photo_id = "/match-by-path.jpg" })
+        end, "Path-only photo identity is unsupported; use catalog_id")
     end)
 
     it("errors when photo not found", function()
         local _, Handler = setup({})
         assert.has_error(function()
-            Handler.getPhotoMetadata({ photo_id = "missing" })
+            Handler.getPhotoMetadata({ photo_id = "999" })
         end)
     end)
 

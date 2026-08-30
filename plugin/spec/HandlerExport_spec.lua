@@ -61,7 +61,7 @@ describe("HandlerExport.exportPhotos", function()
     it("errors when no photos match", function()
         local _, Handler = setup({ photos = {} })
         assert.has_error(function()
-            Handler.exportPhotos({ photo_ids = { "missing" }, destination = "/out" })
+            Handler.exportPhotos({ photo_ids = { "999" }, destination = "/out" })
         end)
     end)
 

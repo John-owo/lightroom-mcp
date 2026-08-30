@@ -4,6 +4,23 @@ Lets Claude (and other AI assistants) talk to your **Adobe Lightroom Classic** p
 
 > **Preset round-trip fork (v0.10.0):** this branch adds exact preset inspection, historical-preset comparison, versioned checkpoint creation, safe preset export, and the complete `raw-photo-lightroom-preset` v2 Codex skill for RAW culling and iterative editing. See the [Traditional Chinese v2 guide](README.md) or open the [bundled skill](skills/raw-photo-lightroom-preset/SKILL.md).
 
+## Project boundary: MCP backend, not the workflow agent
+
+This repository is the standalone Lightroom Classic integration layer. It owns
+the MCP server, Lua plug-in, catalog/develop operations, checkpoints, and
+render/export tools. Claude, Codex, or any other MCP client can use it directly.
+
+Higher-level workflow development moved to
+[`John-owo/photo-agent`](https://github.com/John-owo/photo-agent) during its v0.1
+extraction. PhotoAgent owns durable workflow state, safety/recovery policy,
+closed-loop evaluation, culling, scene clustering, and full-shoot orchestration;
+it may use this repository as one backend. The dependency is one-way:
+`photo-agent -> lightroom-mcp`. Lightroom MCP does not require PhotoAgent.
+
+The bundled `raw-photo-lightroom-preset` remains historical workflow guidance
+and a standalone client recipe. New workflow-engine features belong in
+PhotoAgent; Lightroom-specific tools and transport belong here.
+
 [![npm](https://img.shields.io/npm/v/@mskalski/lightroom-mcp.svg)](https://www.npmjs.com/package/@mskalski/lightroom-mcp)
 [![release](https://img.shields.io/github/v/release/Automaat/lightroom-mcp.svg)](https://github.com/Automaat/lightroom-mcp/releases/latest)
 
@@ -155,11 +172,18 @@ If you'd rather drop the plugin in by hand:
 
 ## Tools
 
+The server currently exposes 20 tools. The Virtual Copy creation and
+read-only reconciliation tools have automated contract, mock, and transport
+coverage; live acceptance of the new reconciliation endpoint is still
+pending.
+
 | Tool | What it does |
 | --- | --- |
 | `search_photos` | Search by filename / keywords / rating / date range. |
 | `get_selected_photos` | Photos selected in Lightroom (or filmstrip). |
-| `get_photo_metadata` | EXIF, GPS, IPTC location, copyright + develop settings for one photo. |
+| `get_photo_metadata` | Stable catalog ID/UUID, Master and Virtual Copy relationships, EXIF, GPS, IPTC location, copyright + develop settings for one catalog photo. Source paths are display-only and cannot be used as photo selectors. |
+| `create_virtual_copy` | Create or reconcile one identity-verified Virtual Copy by stable catalog ID, expected Master UUID, and operation marker. Ambiguous or partial outcomes fail closed with `REVIEW_REQUIRED`; collection placement is separate. Contract, mock, and transport integration coverage exists, but live Lightroom acceptance is still pending. |
+| `reconcile_virtual_copy` | Read-only recovery query for an interrupted Virtual Copy creation. Scans the exact operation marker, verifies the expected Master and Copy relationship, and returns one Copy or `REVIEW_REQUIRED` without changing selection or creating a Copy. |
 | `list_collections` | All collections and collection sets. |
 | `create_collection` | New collection (optional parent set). |
 | `add_to_collection` | Add photos to a named collection. |
@@ -259,6 +283,8 @@ Repo layout:
 
 - **`failed to open localhost:58763` after Reload Plug-in** — old async task still owns the port. Quit Lightroom (Cmd+Q on macOS / Alt+F4 on Windows) and reopen.
 - **Plugin not connected** — the server now self-restarts after a Reload Plug-in that tore down a running instance. If it's still stopped, click **Start Server** in Plug-in Manager; it reconnects within ~1s.
+- **`MCP error -32000: Connection closed` after a client restart** — an older bridge process may still own the singleton lock. The server now watches MCP stdin and releases its TCP sockets, heartbeat, and lock when the client closes; restart the MCP host once after upgrading so an older child can exit cleanly.
+- **`Another Lightroom MCP bridge is already running`** — do not delete the lock file while its PID is alive. Close the owning MCP host/session first; a stale lock with a dead PID is reclaimed automatically on the next start.
 - **Timeout errors** — handler may be scanning a large catalog without filters; add `rating`, `filename`, `keywords`, or date filters to narrow.
 - **macOS "cannot be opened because the developer cannot be verified"** (binary path) — `xattr -d com.apple.quarantine /path/to/binary`. Or right-click → Open the first time.
 - **Windows SmartScreen blocks the .exe** — More info → Run anyway.

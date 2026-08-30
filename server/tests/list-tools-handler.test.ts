@@ -5,6 +5,8 @@ import { TOOL_DEFINITIONS, listToolsHandler } from '../src/list-tools-handler.js
 import {
   DEVELOP_CURVE_SETTING_KEYS,
   DEVELOP_SETTING_KEYS,
+  OPERATION_SEMANTICS,
+  OPERATION_SEMANTICS_META_KEY,
   TOOL_CONTRACTS,
 } from '../src/tool-contracts.js';
 
@@ -12,6 +14,8 @@ const EXPECTED_TOOL_NAMES = [
   'search_photos',
   'get_selected_photos',
   'get_photo_metadata',
+  'create_virtual_copy',
+  'reconcile_virtual_copy',
   'list_collections',
   'create_collection',
   'add_to_collection',
@@ -30,8 +34,8 @@ const EXPECTED_TOOL_NAMES = [
 ] as const;
 
 describe('TOOL_DEFINITIONS', () => {
-  it('contains exactly 18 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(18);
+  it('contains exactly 20 tools', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(20);
   });
 
   it('tool names are unique', () => {
@@ -54,10 +58,14 @@ describe('TOOL_DEFINITIONS', () => {
 
   it('is generated from tool contracts', () => {
     expect(TOOL_DEFINITIONS).toEqual(
-      TOOL_CONTRACTS.map(({ name, description, inputSchema }) => ({
+      TOOL_CONTRACTS.map(({ name, description, inputSchema, outputSchema, operationSemantics }) => ({
         name,
         description,
         inputSchema,
+        ...(outputSchema ? { outputSchema } : {}),
+        _meta: {
+          [OPERATION_SEMANTICS_META_KEY]: operationSemantics,
+        },
       })),
     );
   });
@@ -83,6 +91,8 @@ describe('tool required fields', () => {
 
   it.each<[string, string[]]>([
     ['get_photo_metadata', ['photo_id']],
+    ['create_virtual_copy', ['source_photo_id', 'expected_source_uuid', 'operation_id']],
+    ['reconcile_virtual_copy', ['source_photo_id', 'expected_source_uuid', 'operation_id']],
     ['create_collection', ['name']],
     ['add_to_collection', ['collection_name', 'photo_ids']],
     ['set_keywords', ['photo_ids']],
@@ -111,6 +121,135 @@ describe('tool required fields', () => {
       expect(toolRequired(name)).toBeUndefined();
     },
   );
+});
+
+describe('photo identity contract', () => {
+  it('requires a stable catalog ID and documents persistent relationships', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'get_photo_metadata');
+    const properties = tool?.inputSchema.properties as Record<string, {
+      type?: string;
+      minLength?: number;
+      pattern?: string;
+    }>;
+
+    expect(properties.photo_id).toMatchObject({
+      type: 'string',
+      minLength: 1,
+      pattern: '^[0-9]+$',
+    });
+    expect(tool?.description).toMatch(/UUID/i);
+    expect(tool?.description).toMatch(/Virtual Copy/i);
+  });
+
+  it('declares a typed structured identity output', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'get_photo_metadata');
+    const outputSchema = tool?.outputSchema;
+    const properties = outputSchema?.properties as Record<string, {
+      type?: string;
+      pattern?: string;
+      items?: { properties?: Record<string, object>; required?: string[] };
+    }>;
+
+    expect(outputSchema?.type).toBe('object');
+    expect(outputSchema?.required).toEqual(expect.arrayContaining([
+      'catalog_id',
+      'uuid',
+      'is_virtual_copy',
+      'virtual_copy_count',
+    ]));
+    expect(properties.catalog_id).toMatchObject({ type: 'string', pattern: '^[0-9]+$' });
+    expect(properties.uuid).toMatchObject({ type: 'string' });
+    expect(properties.virtual_copies).toMatchObject({
+      type: 'array',
+      items: expect.objectContaining({
+        required: expect.arrayContaining(['catalog_id', 'uuid', 'is_virtual_copy']),
+      }),
+    });
+  });
+});
+
+describe('virtual copy creation contract', () => {
+  it('exposes a strict identity-safe create_virtual_copy tool', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'create_virtual_copy');
+    const properties = tool?.inputSchema.properties as Record<string, {
+      type?: string;
+      pattern?: string;
+      minLength?: number;
+      maxLength?: number;
+    }>;
+    const metadata = tool?._meta as Record<string, unknown> | undefined;
+    const semantics = metadata?.[OPERATION_SEMANTICS_META_KEY] as Record<string, unknown> | undefined;
+
+    expect(tool).toBeDefined();
+    expect(tool?.inputSchema.required).toEqual([
+      'source_photo_id',
+      'expected_source_uuid',
+      'operation_id',
+    ]);
+    expect(properties.source_photo_id).toMatchObject({
+      type: 'string',
+      pattern: '^[0-9]+$',
+    });
+    expect(properties.operation_id).toMatchObject({
+      type: 'string',
+      minLength: 1,
+      maxLength: 64,
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$',
+    });
+    expect(tool?.outputSchema).toMatchObject({
+      type: 'object',
+      required: expect.arrayContaining([
+        'operation_id',
+        'marker',
+        'result',
+        'selection_restoration',
+      ]),
+    });
+    expect(tool?.outputSchema?.oneOf).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        required: expect.arrayContaining(['source', 'master', 'copy', 'is_virtual_copy']),
+      }),
+      expect.objectContaining({ required: expect.arrayContaining(['partial', 'reason']) }),
+    ]));
+    expect(semantics).toMatchObject({
+      scope: 'selection',
+      requires_active_selection: true,
+      requires_editor_foreground: true,
+      idempotent: false,
+      concurrency: 'exclusive_backend',
+      retry_policy: 'readback_before_retry',
+      safe_to_resume: false,
+    });
+  });
+});
+
+describe('virtual copy reconciliation contract', () => {
+  it('exposes a read-only operation-marker query with no selection or editor requirement', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'reconcile_virtual_copy');
+    const metadata = tool?._meta as Record<string, unknown> | undefined;
+    const semantics = metadata?.[OPERATION_SEMANTICS_META_KEY] as Record<string, unknown> | undefined;
+
+    expect(tool?.inputSchema.required).toEqual([
+      'source_photo_id',
+      'expected_source_uuid',
+      'operation_id',
+    ]);
+    expect(tool?.description).toMatch(/read.only/i);
+    expect(tool?.description).toMatch(/never.*creates/i);
+    expect(tool?.outputSchema).toEqual(TOOL_DEFINITIONS.find(
+      (entry) => entry.name === 'create_virtual_copy',
+    )?.outputSchema);
+    expect(semantics).toMatchObject({
+      side_effect: 'read_only',
+      idempotent: true,
+      scope: 'catalog',
+      requires_active_selection: false,
+      requires_editor_foreground: false,
+      concurrency: 'exclusive_backend',
+      retry_policy: 'automatic',
+      safe_to_resume: true,
+    });
+  });
 });
 
 describe('set_keywords schema', () => {
@@ -233,5 +372,48 @@ describe('tool contracts vs Lua dispatch', () => {
     );
 
     expect(dispatch).toEqual(manifest);
+  });
+});
+
+describe('MCP operation semantics', () => {
+  const semanticsKey = OPERATION_SEMANTICS_META_KEY;
+
+  it('uses a valid reverse-DNS MCP metadata key with one slash', () => {
+    expect(semanticsKey).toMatch(
+      /^[a-z0-9-]+(?:\.[a-z0-9-]+)+\/[a-z0-9][a-z0-9._-]*$/,
+    );
+    expect(semanticsKey.split('/')).toHaveLength(2);
+  });
+
+  it('keeps contract and semantics keys in both directions', () => {
+    expect(Object.keys(OPERATION_SEMANTICS).sort()).toEqual(
+      TOOL_CONTRACTS.map(({ name }) => name).sort(),
+    );
+  });
+
+  it('exposes the canonical operation semantics contract for every tool', () => {
+    for (const tool of TOOL_DEFINITIONS) {
+      const metadata = tool._meta as Record<string, unknown> | undefined;
+      const semantics = metadata?.[semanticsKey] as Record<string, unknown> | undefined;
+
+      expect(semantics).toMatchObject({
+        supported: true,
+        side_effect: expect.any(String),
+        idempotent: expect.any(Boolean),
+        reversible: expect.any(String),
+        scope: expect.any(String),
+        concurrency: expect.any(String),
+        retry_policy: expect.any(String),
+        safe_to_resume: expect.any(Boolean),
+      });
+    }
+
+    const selectedPhotos = TOOL_DEFINITIONS.find((tool) => tool.name === 'get_selected_photos');
+    const selectedMetadata = selectedPhotos?._meta as Record<string, unknown> | undefined;
+    expect(selectedMetadata?.[semanticsKey]).toMatchObject({
+      concurrency: 'exclusive_backend',
+      retry_policy: 'readback_before_retry',
+      requires_active_selection: false,
+    });
   });
 });

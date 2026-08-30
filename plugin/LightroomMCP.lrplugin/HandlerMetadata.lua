@@ -1,6 +1,7 @@
 local LrApplication = import 'LrApplication'
 
 local PhotoLookup = require 'PhotoLookup'
+local PhotoIdentity = require 'PhotoIdentity'
 local Log = require 'Log'
 
 local MetadataHandler = {}
@@ -149,6 +150,7 @@ function MetadataHandler.getPhotoMetadata(args)
                 hsl = hslDevelopSettings(developSettings),
             }
         }
+        PhotoIdentity.enrich(photoData, photo)
     end)
 
     Log.info("Retrieved metadata for photo: " .. args.photo_id)

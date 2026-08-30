@@ -1,6 +1,16 @@
 # Lightroom MCP＋RAW 挑圖調色 Skill v2
 
-這個 fork 把 Lightroom MCP 與完整的 `raw-photo-lightroom-preset` v2 skill 放在同一個 repository，涵蓋：
+這個 fork 最初把 Lightroom MCP 與完整的 `raw-photo-lightroom-preset` v2 skill 放在同一個 repository。v0.1 之後，上層 workflow engine 已抽離至 [`John-owo/photo-agent`](https://github.com/John-owo/photo-agent)。
+
+## 專案邊界：這裡是 MCP backend，不是 workflow agent
+
+本 repository 負責可獨立使用的 Lightroom Classic 整合層：MCP server、Lua 外掛、catalog／Develop 操作、checkpoint 與 render／export 工具。Claude、Codex 或其他 MCP client 都可直接使用，不需要安裝 PhotoAgent。
+
+`photo-agent` 負責持久化工作流程狀態、安全／恢復政策、closed-loop 評估、選片、場景分群與整場拍攝編排，並可把本專案當成其中一個 backend。依賴是單向的：`photo-agent -> lightroom-mcp`；本專案不依賴 PhotoAgent。
+
+repository 內既有的 `raw-photo-lightroom-preset` 保留為歷史工作流程指引與可獨立使用的 client recipe。新的 workflow engine 功能與 roadmap 放在 `photo-agent`；Lightroom 專用工具與 transport 留在這裡。
+
+本 fork 的 Lightroom／skill 歷史範圍涵蓋：
 
 - RAW／JPG 配對與挑圖；
 - 按光線場景分群；
@@ -56,7 +66,7 @@ style_status, lighting_cluster, confidence, notes
 ## 歷史色調迭代流程
 
 1. 選一張不會破壞 master edit 的代表 RAW 或 virtual copy。
-2. 讀取目前 metadata／Develop settings，輸出一張 baseline JPEG。
+2. 讀取目前 metadata／Develop settings 與穩定 catalog ID/UUID、Master／Virtual Copy 關係，輸出一張 baseline JPEG。
 3. 用 `get_develop_preset` 讀取已認可的歷史 preset；同名時用 UUID 或 folder／scope 消除歧義。
 4. 每次只做一小段：技術校正、明暗形狀、色彩校正、創意風格、細節／降噪。
 5. 每段都從 Lightroom 輸出新預覽並實際比較，不一次猜大量滑桿。
@@ -112,7 +122,7 @@ args = ['D:\path\to\lightroom-mcp\server\dist\index.js']
 startup_timeout_sec = 60
 ```
 
-重新啟動 Codex，新的 task 才會載入 18 個工具。
+重新啟動 Codex，新的 task 才會載入 20 個工具。
 
 ### 4. 安裝 v2 skill
 
@@ -139,7 +149,7 @@ Copy-Item -Path "$skillSource\*" -Destination $skillTarget -Recurse -Force
 - 不在未批准的 master edit 上測試。
 - 不只看相機 JPG 就宣稱色彩或 preset 已完成。
 - 不把 crop、白平衡、profile、鏡頭狀態或 detail 設定默默複製到整批。
-- MCP 沒有 virtual copy、snapshot、undo 或完整局部工具；需要遮罩、修復、AI Denoise、Calibration、Color Grading 或 Point Color 時，交回 Lightroom 手動完成。
+- MCP 的 `create_virtual_copy` 只接受穩定 catalog ID、預期 Master UUID 與可重用的 operation ID，並以 identity readback 和 marker reconciliation 防止盲目重複建立；`reconcile_virtual_copy` 是只讀 recovery query，只掃描 exact marker、驗證 Master／Copy 關係，不改 selection 也不建立 Copy。兩者已有 contract、mock 與 transport integration 測試，但新的只讀 endpoint 尚未完成 Lightroom Classic 實機驗收。MCP 仍沒有 snapshot、undo 或完整局部工具；需要遮罩、修復、AI Denoise、Calibration、Color Grading 或 Point Color 時，交回 Lightroom 手動完成。
 - MCP checkpoint 的 backing format 由 Lightroom 決定；內建 preset 若沒有 backing file，不能匯出。
 
 ## 已驗證範圍

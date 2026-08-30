@@ -2,12 +2,64 @@ import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 type InputSchema = Tool["inputSchema"];
 
+export const OPERATION_SEMANTICS_META_KEY =
+  "io.github.john-owo.lightroom-mcp/operation-semantics";
+
+export type OperationSideEffect =
+  | "read_only"
+  | "temporary"
+  | "mutating"
+  | "delivery_export";
+export type OperationReversibility =
+  | "true_undo"
+  | "checkpoint_only"
+  | "new_file"
+  | "irreversible";
+export type OperationScope =
+  | "photo"
+  | "selection"
+  | "catalog"
+  | "filesystem"
+  | "session";
+export type OperationConcurrency =
+  | "parallel_safe"
+  | "per_photo_serialized"
+  | "exclusive_backend";
+export type OperationRetryPolicy =
+  | "automatic"
+  | "readback_before_retry"
+  | "manual_review_only";
+/**
+ * Stable safety metadata for one Lightroom operation.
+ *
+ * These fields are intentionally snake_case: they are part of the public MCP
+ * extension payload and mirror the operation-semantics vocabulary used by the
+ * workflow/orchestrator contract. They are hints for callers, not a substitute
+ * for backend readback or the plugin's serialized dispatch queue.
+ */
+export interface OperationSemantics {
+  supported: boolean;
+  side_effect: OperationSideEffect;
+  idempotent: boolean;
+  reversible: OperationReversibility;
+  scope: OperationScope;
+  requires_active_selection: boolean;
+  requires_editor_foreground: boolean;
+  concurrency: OperationConcurrency;
+  retry_policy: OperationRetryPolicy;
+  safe_to_resume: boolean;
+}
+
 export interface ToolContract {
   name: string;
   description: string;
   luaHandler: string;
   inputSchema: InputSchema;
+  outputSchema?: Tool["outputSchema"];
+  operationSemantics: OperationSemantics;
 }
+
+type ToolContractDefinition = Omit<ToolContract, "operationSemantics">;
 
 const MAX_BULK_PHOTO_IDS = 1000;
 const MAX_KEYWORDS = 1000;
@@ -114,8 +166,150 @@ const stringArray = (description: string, maxItems?: number) => ({
   description,
 });
 
-const photoIdArray = (description: string) =>
-  stringArray(description, MAX_BULK_PHOTO_IDS);
+const catalogPhotoId = {
+  type: "string",
+  minLength: 1,
+  pattern: "^[0-9]+$",
+  description: "Stable Lightroom catalog photo ID (localIdentifier); paths are not accepted",
+};
+
+/**
+ * Operation IDs are deliberately boring transport-safe tokens. They are
+ * reconciliation keys, not an authorization to blindly repeat a catalog
+ * mutation after a timeout.
+ */
+export const OPERATION_ID_PATTERN = "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$";
+
+const operationId = {
+  type: "string",
+  minLength: 1,
+  maxLength: 64,
+  pattern: OPERATION_ID_PATTERN,
+  description: "ASCII reconciliation token (1-64 characters); reuse the same operation ID for reconciliation and never treat a transport request ID as blind retry authorization",
+};
+
+const photoIdArray = (description: string) => ({
+  ...stringArray(description, MAX_BULK_PHOTO_IDS),
+  items: catalogPhotoId,
+});
+
+const photoIdentityReferenceOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    id: { oneOf: [{ type: "number" }, { type: "string" }] },
+    catalog_id: catalogPhotoId,
+    uuid: { type: "string", minLength: 1 },
+    path: { type: "string" },
+    filename: { type: "string" },
+    copy_name: { type: "string" },
+    is_virtual_copy: { type: "boolean" },
+  },
+  required: ["catalog_id", "uuid", "is_virtual_copy"],
+};
+
+const selectionRestorationOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: {
+      type: "string",
+      enum: ["restored", "not_needed", "not_attempted", "failed"],
+    },
+    verified: { type: "boolean" },
+    active_sources_verified: { type: "boolean" },
+    reason: { type: "string" },
+  },
+  required: ["status"],
+};
+
+/**
+ * Public result contract for identity-verified Workflow Copy creation and
+ * read-only reconciliation. The required envelope is also valid for retained-
+ * copy REVIEW_REQUIRED results; optional identities preserve whatever readback
+ * survived a partial failure.
+ */
+export const VIRTUAL_COPY_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation_id: operationId,
+    marker: { type: "string", minLength: 1 },
+    result: {
+      type: "string",
+      enum: ["created", "reconciled", "REVIEW_REQUIRED"],
+    },
+    partial: { type: "boolean" },
+    source: photoIdentityReferenceOutputSchema,
+    master: photoIdentityReferenceOutputSchema,
+    copy: photoIdentityReferenceOutputSchema,
+    candidates: {
+      type: "array",
+      items: photoIdentityReferenceOutputSchema,
+    },
+    candidate_count: { type: "integer", minimum: 0 },
+    is_virtual_copy: { type: "boolean" },
+    selection_restoration: selectionRestorationOutputSchema,
+    reason: { type: "string" },
+  },
+  required: ["operation_id", "marker", "result", "selection_restoration"],
+  oneOf: [
+    {
+      properties: {
+        result: { enum: ["created", "reconciled"] },
+        is_virtual_copy: { enum: [true] },
+      },
+      required: ["source", "master", "copy", "is_virtual_copy"],
+    },
+    {
+      properties: {
+        result: { enum: ["REVIEW_REQUIRED"] },
+      },
+      required: ["partial", "reason"],
+    },
+  ],
+};
+
+const workflowCopyInputSchema: InputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    source_photo_id: {
+      ...catalogPhotoId,
+      description: "Stable Lightroom catalog ID of the expected Master; paths are not accepted",
+    },
+    expected_source_uuid: {
+      type: "string",
+      minLength: 1,
+      description: "Expected persistent UUID of the Master photo",
+    },
+    operation_id: operationId,
+  },
+  required: ["source_photo_id", "expected_source_uuid", "operation_id"],
+};
+
+/**
+ * Identity fields returned by get_photo_metadata. Other metadata fields stay
+ * additive, while these fields are validated by MCP structuredContent.
+ */
+export const PHOTO_METADATA_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
+  type: "object",
+  properties: {
+    catalog_id: catalogPhotoId,
+    uuid: { type: "string", minLength: 1 },
+    copy_name: { type: "string" },
+    is_virtual_copy: { type: "boolean" },
+    master: photoIdentityReferenceOutputSchema,
+    master_id: catalogPhotoId,
+    master_uuid: { type: "string", minLength: 1 },
+    virtual_copies: {
+      type: "array",
+      items: photoIdentityReferenceOutputSchema,
+    },
+    virtual_copy_count: { type: "integer", minimum: 0 },
+  },
+  required: ["catalog_id", "uuid", "is_virtual_copy", "virtual_copy_count"],
+};
 
 const dateStringSchema = (description: string) => ({
   type: "string",
@@ -160,7 +354,7 @@ const presetSelectorSchema: InputSchema = {
   anyOf: [{ required: ["preset_uuid"] }, { required: ["preset_name"] }],
 };
 
-export const TOOL_CONTRACTS: ToolContract[] = [
+const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
   {
     name: "search_photos",
     luaHandler: "HandlerSearch.searchPhotos",
@@ -202,15 +396,32 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "get_photo_metadata",
     luaHandler: "HandlerMetadata.getPhotoMetadata",
     description:
-      "Get detailed metadata for a specific photo: EXIF, title/caption/headline, GPS (latitude/longitude/altitude), IPTC location (sublocation/city/stateProvince/country/isoCountryCode), copyright, and develop settings",
+      "Get detailed metadata and persistent identity for a Lightroom catalog photo: stable catalog ID, UUID, Master relationship, Virtual Copy status and siblings, EXIF, title/caption/headline, GPS (latitude/longitude/altitude), IPTC location (sublocation/city/stateProvince/country/isoCountryCode), copyright, and develop settings. Use the catalog ID for identity; source paths are display-only and are not accepted as selectors.",
+    outputSchema: PHOTO_METADATA_OUTPUT_SCHEMA,
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_id: { type: "string", description: "Photo ID or file path" },
+        photo_id: catalogPhotoId,
       },
       required: ["photo_id"],
     },
+  },
+  {
+    name: "create_virtual_copy",
+    luaHandler: "HandlerVirtualCopy.createVirtualCopy",
+    description:
+      "Create or reconcile one identity-verified Lightroom Virtual Copy from a Master photo. Requires a stable catalog ID, expected Master UUID, and an ASCII operation ID; path-only identities are rejected. Existing copies are reconciled by the operation marker before any creation. Ambiguous matches fail closed with REVIEW_REQUIRED, retained copies are reported, and no collection placement is performed.",
+    outputSchema: VIRTUAL_COPY_OUTPUT_SCHEMA,
+    inputSchema: workflowCopyInputSchema,
+  },
+  {
+    name: "reconcile_virtual_copy",
+    luaHandler: "HandlerVirtualCopy.reconcileVirtualCopy",
+    description:
+      "Read-only reconciliation of an interrupted Workflow Copy creation. Scans the catalog for the exact operation marker, validates the expected Master and Copy/Master relationship, and returns one verified Copy or REVIEW_REQUIRED; it never changes selection or creates a Copy.",
+    outputSchema: VIRTUAL_COPY_OUTPUT_SCHEMA,
+    inputSchema: workflowCopyInputSchema,
   },
   {
     name: "list_collections",
@@ -248,7 +459,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       additionalProperties: false,
       properties: {
         collection_name: { type: "string", description: "Collection name" },
-        photo_ids: photoIdArray("Array of photo IDs or file paths"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs; paths are not accepted"),
       },
       required: ["collection_name", "photo_ids"],
     },
@@ -261,7 +472,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_ids: photoIdArray("Array of photo IDs or file paths"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs; paths are not accepted"),
         add_keywords: stringArray("Keywords to add", MAX_KEYWORDS),
         remove_keywords: stringArray("Keywords to remove", MAX_KEYWORDS),
       },
@@ -276,7 +487,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_ids: photoIdArray("Array of photo IDs or file paths"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs; paths are not accepted"),
         rating: {
           type: "number",
           description: "Star rating (0-5)",
@@ -316,7 +527,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_ids: photoIdArray("Array of photo IDs or file paths to export"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs to export; paths are not accepted"),
         destination: { type: "string", description: "Export destination folder" },
         format: {
           type: "string",
@@ -376,7 +587,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_id: { type: "string", minLength: 1, description: "Source photo ID or file path" },
+        photo_id: { ...catalogPhotoId, description: "Stable Lightroom catalog photo ID; paths are not accepted" },
         preset_name: {
           type: "string",
           minLength: 1,
@@ -427,7 +638,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       type: "object",
       additionalProperties: false,
       properties: {
-        photo_ids: photoIdArray("Array of photo IDs or file paths"),
+        photo_ids: photoIdArray("Array of stable Lightroom catalog photo IDs; paths are not accepted"),
         preset_name: {
           type: "string",
           description: "Preset name",
@@ -449,10 +660,10 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       additionalProperties: false,
       properties: {
         source_id: {
-          type: "string",
-          description: "Source photo ID or file path",
+          ...catalogPhotoId,
+          description: "Stable Lightroom catalog photo ID; paths are not accepted",
         },
-        target_ids: photoIdArray("Target photo IDs or file paths"),
+        target_ids: photoIdArray("Target stable Lightroom catalog photo IDs; paths are not accepted"),
         settings: {
           type: "array",
           items: {
@@ -478,8 +689,8 @@ export const TOOL_CONTRACTS: ToolContract[] = [
       additionalProperties: false,
       properties: {
         photo_id: {
-          type: "string",
-          description: "Photo ID or file path",
+          ...catalogPhotoId,
+          description: "Stable Lightroom catalog photo ID; paths are not accepted",
         },
         settings: {
           type: "object",
@@ -494,3 +705,130 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     },
   },
 ];
+
+const readOnlySemantics = (
+  scope: OperationScope,
+  overrides: Partial<OperationSemantics> = {},
+): OperationSemantics => ({
+  supported: true,
+  side_effect: "read_only",
+  idempotent: true,
+  reversible: "true_undo",
+  scope,
+  requires_active_selection: false,
+  requires_editor_foreground: false,
+  concurrency: "parallel_safe",
+  retry_policy: "automatic",
+  safe_to_resume: true,
+  ...overrides,
+});
+
+const mutatingSemantics = (
+  scope: OperationScope,
+  overrides: Partial<OperationSemantics> = {},
+): OperationSemantics => ({
+  supported: true,
+  side_effect: "mutating",
+  idempotent: false,
+  reversible: "irreversible",
+  scope,
+  requires_active_selection: false,
+  requires_editor_foreground: false,
+  concurrency: "exclusive_backend",
+  retry_policy: "manual_review_only",
+  safe_to_resume: false,
+  ...overrides,
+});
+
+const deliverySemantics = (
+  scope: OperationScope,
+  overrides: Partial<OperationSemantics> = {},
+): OperationSemantics => ({
+  supported: true,
+  side_effect: "delivery_export",
+  idempotent: false,
+  reversible: "new_file",
+  scope,
+  requires_active_selection: false,
+  requires_editor_foreground: false,
+  concurrency: "exclusive_backend",
+  retry_policy: "readback_before_retry",
+  safe_to_resume: false,
+  ...overrides,
+});
+
+/**
+ * Operation semantics are keyed separately from the input schemas so adding a
+ * safety constraint cannot accidentally loosen argument validation. The
+ * public `TOOL_CONTRACTS` export below joins the two contract layers and fails
+ * fast if a newly-added tool forgets to declare its execution semantics.
+ */
+export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> = {
+  search_photos: readOnlySemantics("catalog"),
+  get_selected_photos: readOnlySemantics("selection", {
+    requires_active_selection: false,
+    concurrency: "exclusive_backend",
+    retry_policy: "readback_before_retry",
+    safe_to_resume: true,
+  }),
+  get_photo_metadata: readOnlySemantics("photo"),
+  reconcile_virtual_copy: readOnlySemantics("catalog", {
+    concurrency: "exclusive_backend",
+  }),
+  create_virtual_copy: mutatingSemantics("selection", {
+    requires_active_selection: true,
+    requires_editor_foreground: true,
+    concurrency: "exclusive_backend",
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  list_collections: readOnlySemantics("catalog"),
+  create_collection: mutatingSemantics("catalog"),
+  add_to_collection: mutatingSemantics("catalog", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  set_keywords: mutatingSemantics("photo", {
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  set_rating: mutatingSemantics("photo", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  import_photos: mutatingSemantics("catalog"),
+  export_photos: deliverySemantics("filesystem"),
+  list_develop_presets: readOnlySemantics("catalog"),
+  get_develop_preset: readOnlySemantics("catalog"),
+  compare_develop_presets: readOnlySemantics("catalog"),
+  create_develop_preset: mutatingSemantics("filesystem"),
+  export_develop_preset: deliverySemantics("filesystem", {
+    concurrency: "parallel_safe",
+  }),
+  apply_develop_preset: mutatingSemantics("photo", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  copy_develop_settings: mutatingSemantics("photo", {
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  set_develop_settings: mutatingSemantics("photo", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+};
+
+export const TOOL_CONTRACTS: ToolContract[] = TOOL_CONTRACT_DEFINITIONS.map(
+  (contract) => {
+    const operationSemantics = OPERATION_SEMANTICS[contract.name];
+    if (!operationSemantics) {
+      throw new Error(`Missing operation semantics for tool: ${contract.name}`);
+    }
+    return { ...contract, operationSemantics };
+  },
+);

@@ -6,9 +6,9 @@ describe("HandlerSearch.searchPhotos", function()
     before_each(function()
         catalog = helper.fakeCatalog({
             photos = {
-                helper.fakePhoto({ id = "1", path = "/a/sunset.jpg", fileName = "sunset.jpg", rating = 5, dateTimeOriginal = "2024-06-01" }),
-                helper.fakePhoto({ id = "2", path = "/b/portrait.jpg", fileName = "portrait.jpg", rating = 3, dateTimeOriginal = "2024-06-02" }),
-                helper.fakePhoto({ id = "3", path = "/c/landscape.jpg", fileName = "landscape.jpg", rating = 5, dateTimeOriginal = "2024-06-03" }),
+                helper.fakePhoto({ id = "1", path = "/a/sunset.jpg", fileName = "sunset.jpg", rating = 5, dateTimeOriginal = "2024-06-01", isVirtualCopy = false }),
+                helper.fakePhoto({ id = "2", path = "/b/portrait.jpg", fileName = "portrait.jpg", rating = 3, dateTimeOriginal = "2024-06-02", isVirtualCopy = false }),
+                helper.fakePhoto({ id = "3", path = "/c/landscape.jpg", fileName = "landscape.jpg", rating = 5, dateTimeOriginal = "2024-06-03", isVirtualCopy = false }),
             },
         })
 
@@ -40,6 +40,31 @@ describe("HandlerSearch.searchPhotos", function()
         local result = Handler.searchPhotos({ filename = "PORTRAIT" })
         assert.are.equal(1, result.count)
         assert.are.equal("portrait.jpg", result.photos[1].filename)
+    end)
+
+    it("returns persistent identity for each matching photo", function()
+        local photo = helper.fakePhoto({
+            id = "4",
+            uuid = "uuid-4",
+            path = "/相片/街景.jpg",
+            fileName = "街景.jpg",
+            copyName = "原始版本",
+            isVirtualCopy = false,
+        })
+        local catalog = helper.fakeCatalog({ photos = { photo } })
+        helper.installImport({
+            LrApplication = { activeCatalog = function() return catalog end },
+            LrLogger = helper.defaultLrLogger(),
+        })
+        package.loaded.HandlerSearch = nil
+        Handler = require 'HandlerSearch'
+
+        local result = Handler.searchPhotos({ filename = "街景" })
+        local identity = result.photos[1]
+        assert.are.equal("4", identity.catalog_id)
+        assert.are.equal("uuid-4", identity.uuid)
+        assert.are.equal("街景.jpg", identity.filename)
+        assert.is_false(identity.is_virtual_copy)
     end)
 
     it("filters by date range", function()
@@ -115,7 +140,7 @@ describe("HandlerSearch.searchPhotos pagination", function()
                 path = "/p/" .. i .. ".jpg",
                 fileName = "p" .. i .. ".jpg",
                 rating = 0,
-                dateTimeOriginal = "2024-06-01",
+                dateTimeOriginal = "2024-06-01", isVirtualCopy = false,
             }))
         end
         local catalog = helper.fakeCatalog({ photos = photos })

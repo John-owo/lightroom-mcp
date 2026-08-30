@@ -45,10 +45,10 @@ describe('createMcpServer', () => {
   });
 
   describe('ListTools', () => {
-    it('returns all 18 tools', async () => {
+    it('returns all 20 tools', async () => {
       pair = await connect();
       const { tools } = await pair.client.listTools();
-      expect(tools).toHaveLength(18);
+      expect(tools).toHaveLength(20);
     });
 
     it('includes search_photos and set_develop_settings', async () => {
@@ -56,6 +56,7 @@ describe('createMcpServer', () => {
       const { tools } = await pair.client.listTools();
       const names = tools.map((t) => t.name);
       expect(names).toContain('search_photos');
+      expect(names).toContain('create_virtual_copy');
       expect(names).toContain('set_develop_settings');
     });
 
@@ -105,6 +106,28 @@ describe('createMcpServer', () => {
       const data = { count: 2, items: ['a', 'b'] };
       pair = await connect({ call: async () => ({ id: '1', result: data }) });
       const result = asToolResult(await pair.client.callTool({ name: 'get_selected_photos', arguments: {} }));
+      expect(result.isError).toBeFalsy();
+      expect(JSON.parse(result.content[0].text)).toEqual(data);
+    });
+
+    it('preserves persistent identity, relationships, and non-ASCII catalog data', async () => {
+      const data = {
+        id: 101,
+        catalog_id: '101',
+        uuid: 'uuid-copy-one',
+        path: '/相片/夕陽.jpg',
+        filename: '夕陽.jpg',
+        copy_name: '暖色版本',
+        is_virtual_copy: true,
+        master: { catalog_id: '100', uuid: 'uuid-master' },
+      };
+      pair = await connect({ call: async () => ({ id: '1', result: data }) });
+
+      const result = asToolResult(await pair.client.callTool({
+        name: 'get_photo_metadata',
+        arguments: { photo_id: '101' },
+      }));
+
       expect(result.isError).toBeFalsy();
       expect(JSON.parse(result.content[0].text)).toEqual(data);
     });

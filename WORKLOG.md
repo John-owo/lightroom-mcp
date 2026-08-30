@@ -1481,3 +1481,16 @@ Unverified boundaries:
   Explicit read-only ref checks confirmed the intended `origin` repository
   `John-owo/lightroom-mcp` has `main` at `19431c06ddf7273cb83f6b1e7dd72bcf5fac254a`
   and the T08 branch at `8ac3e0e2b2aed059f5a94cb3a165fface42a014e`.
+
+## 2026-08-30 - T08 PR baseline checkout blocker
+
+- PR #12 remote checks exposed a pre-existing branch-history blocker outside
+  the T08 allowlist: Windows checkout failed with `unable to create symlink
+  AGENTS.md: Filename too long`, and the Lua lint setup failed while `mise`
+  tried to stat the same long symlink target. Ubuntu/macOS, Busted, CodeQL,
+  and version consistency passed.
+- `origin/main` stores `AGENTS.md` as the portable symlink target
+  `CLAUDE.md`; the integration branch had the 623-character guidance text as
+  its symlink target. Restored only that target to `CLAUDE.md` so the branch
+  can be checked out on Windows. This is a separate CI-baseline repair, not a
+  T08 implementation change; no configured checkout was touched.

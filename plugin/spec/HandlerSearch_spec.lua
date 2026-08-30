@@ -6,9 +6,9 @@ describe("HandlerSearch.searchPhotos", function()
     before_each(function()
         catalog = helper.fakeCatalog({
             photos = {
-                helper.fakePhoto({ id = "1", path = "/a/sunset.jpg", fileName = "sunset.jpg", rating = 5, dateTimeOriginal = "2024-06-01" }),
-                helper.fakePhoto({ id = "2", path = "/b/portrait.jpg", fileName = "portrait.jpg", rating = 3, dateTimeOriginal = "2024-06-02" }),
-                helper.fakePhoto({ id = "3", path = "/c/landscape.jpg", fileName = "landscape.jpg", rating = 5, dateTimeOriginal = "2024-06-03" }),
+                helper.fakePhoto({ id = "1", path = "/a/sunset.jpg", fileName = "sunset.jpg", rating = 5, dateTimeOriginal = "2024-06-01", isVirtualCopy = false }),
+                helper.fakePhoto({ id = "2", path = "/b/portrait.jpg", fileName = "portrait.jpg", rating = 3, dateTimeOriginal = "2024-06-02", isVirtualCopy = false }),
+                helper.fakePhoto({ id = "3", path = "/c/landscape.jpg", fileName = "landscape.jpg", rating = 5, dateTimeOriginal = "2024-06-03", isVirtualCopy = false }),
             },
         })
 
@@ -140,7 +140,7 @@ describe("HandlerSearch.searchPhotos pagination", function()
                 path = "/p/" .. i .. ".jpg",
                 fileName = "p" .. i .. ".jpg",
                 rating = 0,
-                dateTimeOriginal = "2024-06-01",
+                dateTimeOriginal = "2024-06-01", isVirtualCopy = false,
             }))
         end
         local catalog = helper.fakeCatalog({ photos = photos })

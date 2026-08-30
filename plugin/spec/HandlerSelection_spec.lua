@@ -17,9 +17,9 @@ describe("HandlerSelection.getSelectedPhotos", function()
     end
 
     it("returns selected photos when selection is non-empty", function()
-        local p1 = helper.fakePhoto({ id = "1", path = "/a.jpg", fileName = "a.jpg", rating = 5 })
-        local p2 = helper.fakePhoto({ id = "2", path = "/b.jpg", fileName = "b.jpg", rating = 3 })
-        local p3 = helper.fakePhoto({ id = "3", path = "/c.jpg", fileName = "c.jpg", rating = 0 })
+        local p1 = helper.fakePhoto({ id = "1", path = "/a.jpg", fileName = "a.jpg", rating = 5, isVirtualCopy = false })
+        local p2 = helper.fakePhoto({ id = "2", path = "/b.jpg", fileName = "b.jpg", rating = 3, isVirtualCopy = false })
+        local p3 = helper.fakePhoto({ id = "3", path = "/c.jpg", fileName = "c.jpg", rating = 0, isVirtualCopy = false })
         setup({ photos = { p1, p2, p3 }, targetPhotos = { p1, p3 } })
 
         local r = Handler.getSelectedPhotos({})
@@ -32,8 +32,8 @@ describe("HandlerSelection.getSelectedPhotos", function()
     it("falls back to filmstrip when no selection (targetPhotos defaults to all)", function()
         setup({
             photos = {
-                helper.fakePhoto({ id = "1", fileName = "a.jpg" }),
-                helper.fakePhoto({ id = "2", fileName = "b.jpg" }),
+                helper.fakePhoto({ id = "1", fileName = "a.jpg", isVirtualCopy = false }),
+                helper.fakePhoto({ id = "2", fileName = "b.jpg", isVirtualCopy = false }),
             },
         })
         local r = Handler.getSelectedPhotos({})
@@ -46,7 +46,7 @@ describe("HandlerSelection.getSelectedPhotos", function()
             photos = { helper.fakePhoto({
                 id = "42", path = "/x.jpg", fileName = "x.jpg",
                 uuid = "uuid-42", copyName = "主版本",
-                rating = 4, dateTimeOriginal = "2026-05-06",
+                rating = 4, dateTimeOriginal = "2026-05-06", isVirtualCopy = false,
             }) },
         })
         local r = Handler.getSelectedPhotos({})
@@ -65,7 +65,7 @@ describe("HandlerSelection.getSelectedPhotos", function()
     it("paginates via limit and offset", function()
         local photos = {}
         for i = 1, 250 do
-            table.insert(photos, helper.fakePhoto({ id = tostring(i), fileName = "p" .. i .. ".jpg" }))
+            table.insert(photos, helper.fakePhoto({ id = tostring(i), fileName = "p" .. i .. ".jpg", isVirtualCopy = false }))
         end
         setup({ photos = photos })
 
@@ -79,7 +79,7 @@ describe("HandlerSelection.getSelectedPhotos", function()
     it("caps to 100 by default", function()
         local photos = {}
         for i = 1, 150 do
-            table.insert(photos, helper.fakePhoto({ id = tostring(i), fileName = "p.jpg" }))
+            table.insert(photos, helper.fakePhoto({ id = tostring(i), fileName = "p.jpg", isVirtualCopy = false }))
         end
         setup({ photos = photos })
 
@@ -98,7 +98,7 @@ describe("HandlerSelection.getSelectedPhotos", function()
     end)
 
     it("calls getTargetPhotos OUTSIDE the read-access gate (#134 deadlock guard)", function()
-        local p1 = helper.fakePhoto({ id = "1", path = "/a.jpg", fileName = "a.jpg", rating = 5 })
+        local p1 = helper.fakePhoto({ id = "1", path = "/a.jpg", fileName = "a.jpg", rating = 5, isVirtualCopy = false })
         setup({ photos = { p1 }, targetPhotos = { p1 } })
         Handler.getSelectedPhotos({})
         assert.is_false(lastCatalog.getQueriedInsideReadAccess())

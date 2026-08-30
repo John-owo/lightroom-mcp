@@ -224,9 +224,10 @@ const selectionRestorationOutputSchema = {
 };
 
 /**
- * Public result contract for identity-verified Workflow Copy creation. The
- * required envelope is also valid for retained-copy REVIEW_REQUIRED results;
- * optional identities preserve whatever readback survived a partial failure.
+ * Public result contract for identity-verified Workflow Copy creation and
+ * read-only reconciliation. The required envelope is also valid for retained-
+ * copy REVIEW_REQUIRED results; optional identities preserve whatever readback
+ * survived a partial failure.
  */
 export const VIRTUAL_COPY_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
   type: "object",
@@ -267,6 +268,24 @@ export const VIRTUAL_COPY_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
       required: ["partial", "reason"],
     },
   ],
+};
+
+const workflowCopyInputSchema: InputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    source_photo_id: {
+      ...catalogPhotoId,
+      description: "Stable Lightroom catalog ID of the expected Master; paths are not accepted",
+    },
+    expected_source_uuid: {
+      type: "string",
+      minLength: 1,
+      description: "Expected persistent UUID of the Master photo",
+    },
+    operation_id: operationId,
+  },
+  required: ["source_photo_id", "expected_source_uuid", "operation_id"],
 };
 
 /**
@@ -394,23 +413,15 @@ const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
     description:
       "Create or reconcile one identity-verified Lightroom Virtual Copy from a Master photo. Requires a stable catalog ID, expected Master UUID, and an ASCII operation ID; path-only identities are rejected. Existing copies are reconciled by the operation marker before any creation. Ambiguous matches fail closed with REVIEW_REQUIRED, retained copies are reported, and no collection placement is performed.",
     outputSchema: VIRTUAL_COPY_OUTPUT_SCHEMA,
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        source_photo_id: {
-          ...catalogPhotoId,
-          description: "Stable Lightroom catalog ID of the expected Master; paths are not accepted",
-        },
-        expected_source_uuid: {
-          type: "string",
-          minLength: 1,
-          description: "Expected persistent UUID of the Master photo",
-        },
-        operation_id: operationId,
-      },
-      required: ["source_photo_id", "expected_source_uuid", "operation_id"],
-    },
+    inputSchema: workflowCopyInputSchema,
+  },
+  {
+    name: "reconcile_virtual_copy",
+    luaHandler: "HandlerVirtualCopy.reconcileVirtualCopy",
+    description:
+      "Read-only reconciliation of an interrupted Workflow Copy creation. Scans the catalog for the exact operation marker, validates the expected Master and Copy/Master relationship, and returns one verified Copy or REVIEW_REQUIRED; it never changes selection or creates a Copy.",
+    outputSchema: VIRTUAL_COPY_OUTPUT_SCHEMA,
+    inputSchema: workflowCopyInputSchema,
   },
   {
     name: "list_collections",
@@ -761,6 +772,9 @@ export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> =
     safe_to_resume: true,
   }),
   get_photo_metadata: readOnlySemantics("photo"),
+  reconcile_virtual_copy: readOnlySemantics("catalog", {
+    concurrency: "exclusive_backend",
+  }),
   create_virtual_copy: mutatingSemantics("selection", {
     requires_active_selection: true,
     requires_editor_foreground: true,

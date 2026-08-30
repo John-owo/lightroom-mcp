@@ -396,3 +396,49 @@ describe("HandlerVirtualCopy.createVirtualCopy", function()
         assert.are.equal(1, catalog.getCreateVirtualCopiesCalls())
     end)
 end)
+
+describe("HandlerVirtualCopy.reconcileVirtualCopy", function()
+    it("finds one verified Copy without changing selection or creating a Copy", function()
+        local source = helper.fakePhoto(masterMeta({ countVirtualCopies = 1 }))
+        local copy = makeCopy(source)
+        source.__meta.virtualCopies = { copy }
+        local catalog, Handler = setup({ photos = { source, copy } })
+
+        local result = Handler.reconcileVirtualCopy({
+            source_photo_id = "100",
+            expected_source_uuid = "uuid-master",
+            operation_id = "op-001",
+        })
+
+        assert.are.equal("reconciled", result.result)
+        assert.are.equal("101", result.copy.catalog_id)
+        assert.are.equal("uuid-copy", result.copy.uuid)
+        assert.is_true(result.copy.is_virtual_copy)
+        assert.are.equal("not_needed", result.selection_restoration.status)
+        assert.is_true(result.selection_restoration.verified)
+        assert.are.equal(0, catalog.getCreateVirtualCopiesCalls())
+        assert.are.equal(0, #catalog.getSelectedPhotoCalls())
+        assert.are.equal(0, catalog.getWriteAccessCount())
+    end)
+
+    it("stops at REVIEW_REQUIRED when the operation marker is ambiguous", function()
+        local source = helper.fakePhoto(masterMeta({ countVirtualCopies = 2 }))
+        local copyOne = makeCopy(source, { id = "101", uuid = "uuid-copy-one" })
+        local copyTwo = makeCopy(source, { id = "102", uuid = "uuid-copy-two" })
+        source.__meta.virtualCopies = { copyOne, copyTwo }
+        local catalog, Handler = setup({ photos = { source, copyOne, copyTwo } })
+
+        local result = Handler.reconcileVirtualCopy({
+            source_photo_id = "100",
+            expected_source_uuid = "uuid-master",
+            operation_id = "op-001",
+        })
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_false(result.partial)
+        assert.are.equal(2, result.candidate_count)
+        assert.are.equal(0, catalog.getCreateVirtualCopiesCalls())
+        assert.are.equal(0, #catalog.getSelectedPhotoCalls())
+        assert.are.equal(0, catalog.getWriteAccessCount())
+    end)
+end)

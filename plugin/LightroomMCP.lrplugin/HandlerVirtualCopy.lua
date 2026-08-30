@@ -299,15 +299,7 @@ local function validateArgs(args)
     end
 end
 
-function VirtualCopyHandler.createVirtualCopy(args)
-    validateArgs(args)
-
-    local catalog = LrApplication.activeCatalog()
-    local operationId = args.operation_id
-    local marker = markerFor(operationId)
-
-    -- Resolve the source by the stable local catalog ID before any selection
-    -- or write operation. PhotoLookup also rejects path-only/ambiguous IDs.
+local function readSourceAndCandidates(catalog, args)
     local source = PhotoLookup.resolveOne(catalog, args.source_photo_id)
     if not source then
         error("Source photo not found: " .. tostring(args.source_photo_id), 0)
@@ -315,9 +307,9 @@ function VirtualCopyHandler.createVirtualCopy(args)
 
     local sourceIdentity
     local candidates
-    -- Reconciliation is catalog-wide: a marker left on another Master is
-    -- still evidence that this operation already ran and must not be replaced
-    -- by a blind second creation for a different source argument.
+    -- Keep catalog enumeration outside the SDK read gate. Lightroom can
+    -- deadlock when a query is nested inside withReadAccessDo; metadata and
+    -- relationship checks remain inside the gate.
     local allPhotos = copyArray(catalog:getAllPhotos() or {})
     catalog:withReadAccessDo(function()
         sourceIdentity = publicIdentity(source)
@@ -330,8 +322,63 @@ function VirtualCopyHandler.createVirtualCopy(args)
         if sourceIdentity.is_virtual_copy then
             error("Source photo must be a Master, not a Virtual Copy", 0)
         end
-        candidates = markerCandidates(allPhotos, source, marker)
+        candidates = markerCandidates(allPhotos, source, markerFor(args.operation_id))
     end)
+    return source, sourceIdentity, candidates
+end
+
+-- This is deliberately a separate read-only API. Recovery may call it after
+-- an interrupted create, but it must never enter the selection or mutation
+-- path below and must not call createVirtualCopies.
+function VirtualCopyHandler.reconcileVirtualCopy(args)
+    validateArgs(args)
+
+    local catalog = LrApplication.activeCatalog()
+    local operationId = args.operation_id
+    local marker = markerFor(operationId)
+    local _, sourceIdentity, candidates = readSourceAndCandidates(catalog, args)
+
+    if #candidates == 1 and candidates[1].verified
+        and usableIdentity(candidates[1].identity) then
+        local copyIdentity = candidates[1].identity
+        return {
+            operation_id = operationId,
+            marker = marker,
+            result = "reconciled",
+            partial = false,
+            source = sourceIdentity,
+            master = sourceIdentity,
+            copy = copyIdentity,
+            candidates = identityList(candidates),
+            candidate_count = #candidates,
+            is_virtual_copy = true,
+            selection_restoration = selectionStatus("not_needed", true),
+        }
+    end
+
+    return reviewResult(
+        operationId,
+        marker,
+        sourceIdentity,
+        candidates,
+        "Read-only Workflow Copy reconciliation did not find exactly one verified Copy",
+        selectionStatus("not_attempted", false),
+        nil,
+        false
+    )
+end
+
+function VirtualCopyHandler.createVirtualCopy(args)
+    validateArgs(args)
+
+    local catalog = LrApplication.activeCatalog()
+    local operationId = args.operation_id
+    local marker = markerFor(operationId)
+
+    -- Resolve and validate the source before any selection or write operation.
+    -- Reconciliation is catalog-wide so a marker on another Master remains
+    -- evidence that this operation must not be replaced by a second create.
+    local source, sourceIdentity, candidates = readSourceAndCandidates(catalog, args)
 
     -- Reconcile before touching the UI selection. Any marker-bearing entry
     -- must be unambiguous and relation-verified; otherwise fail closed rather

@@ -1383,3 +1383,95 @@ Unverified boundaries:
 - The push included the locally committed T01-T04 integration and live T04
   acceptance record. No merge, issue closure/update, milestone change, pull
   request creation, or push to `upstream` occurred.
+
+## 2026-08-30 - read-only Workflow Copy reconciliation capability
+
+- Added `reconcile_virtual_copy` to the integration contract and dispatch. It
+  scans the catalog by the exact operation marker, validates the expected Master
+  and Copy/Master relationship, and returns one reconciled Copy or
+  `REVIEW_REQUIRED` without changing selection or calling
+  `createVirtualCopies`.
+- Reused the existing strict identity/marker checks in `HandlerVirtualCopy`;
+  `PhotoIdentity.lua` was inspected as the metadata identity source and was not
+  changed. Server contract tests and Lua tests for no-write/no-create behavior
+  were added. Verification is pending.
+- `server\npm.cmd run check` passed after the read-only reconciliation contract
+  and dispatch changes.
+
+## 2026-08-30 - read-only Workflow Copy reconciliation targeted verification
+
+- `server\npm.cmd test -- --runInBand tests/list-tools-handler.test.ts` passed:
+  1 suite / 66 tests. The new `reconcile_virtual_copy` contract is present,
+  read-only, catalog-scoped, automatically retry-safe, and shares the strict
+  Workflow Copy output schema.
+- First full `server\npm.cmd test -- --runInBand` run exposed one stale
+  baseline assertion in `server/tests/server.test.ts`: it expected the old
+  19-tool surface while the new contract correctly advertises 20 tools. The
+  other 14 suites passed (174 tests); this was recorded as a verification
+  failure before the assertion was updated.
+- After updating that expected tool count, full `server\npm.cmd test --
+  --runInBand` passed: 15 suites / 175 tests.
+- Integration server verification also passed: `server\npm.cmd run check`,
+  `server\npm.cmd run lint`, `server\npm.cmd run build`, and
+  `git diff d1be8fe --check` (all exit 0).
+- Official Lua attempt `mise run lua:test --
+  plugin/spec/HandlerVirtualCopy_spec.lua` was blocked before execution:
+  `mise` is not installed on PATH. The prepared fallback runner was also
+  unavailable because no `lua`, `luac`, `selene`, or `luacheck` executable is
+  installed on PATH; no Lua pass is claimed for this continuation.
+- Updated the integration README tool count from 19 to 20 and documented the
+  new read-only `reconcile_virtual_copy` endpoint and its pending live
+  Lightroom acceptance boundary.
+- Final post-edit rerun passed: full `server\npm.cmd test -- --runInBand`
+  remained 15 suites / 175 tests; server check, lint, build, and
+  `git diff d1be8fe --check` all returned exit 0.
+- The first full Lua fallback sweep with the new endpoint ran 12 spec files
+  successfully but exposed 17 failures in the pre-existing Search/Selection
+  fixtures: strict `PhotoIdentity` now correctly rejects omitted
+  `isVirtualCopy` status. The failure was retained as evidence; no production
+  guard was weakened.
+- Updated only those stale Search/Selection fixture records to explicitly
+  represent Master photos (`isVirtualCopy = false`). The intentional missing
+  and malformed identity cases in `HandlerMetadata_spec.lua` remain unchanged.
+- Final Lua verification with the prepared Lua 5.4.6 runner passed all 14
+  plugin spec files / 155 behavior tests, each executed in a separate process.
+  `luac.exe -p` parsed all 32 plugin and spec Lua files, and Selene 0.31.0
+  reported 0 errors, 0 warnings, and 0 parse errors.
+
+## 2026-08-30 - T08 final safety invariant and dual-axis review
+
+- Static integration invariant check passed: the
+  `reconcileVirtualCopy` handler segment contains no
+  `createVirtualCopies`, `withWriteAccessDo`, selection, or write calls, and
+  the `reconcile_virtual_copy` contract is explicitly read-only and catalog
+  scoped.
+- Standards review against fixed base
+  `d1be8fed5c14e6a400a1fcf93da9caea9c73d60e`, the repository instructions,
+  and the existing plugin/server conventions passed with no P1/P2 findings.
+  The configured `D:\photo\lightroom-mcp-john` checkout was not modified.
+- Spec review against the T08 handoff and issue #13 acceptance criteria
+  passed: the catalog-wide operation-marker query validates the expected
+  Master and Copy relationship, returns one reconciled Copy or
+  `REVIEW_REQUIRED`, and never changes selection or creates a Copy. Contract,
+  dispatch, Lua behavior, and no-write regression coverage are aligned.
+- The official `mise` command remains unavailable in this environment; the
+  prepared Lua 5.4.6 runner, `luac.exe`, and Selene provided the recorded
+  automated/spec verification. No live Lightroom or human visual acceptance
+  is claimed.
+- Final post-review `git diff d1be8fed5c14e6a400a1fcf93da9caea9c73d60e
+  --check` exited 0. Git emitted only the known LF-to-CRLF working-copy
+  normalization warnings; no whitespace errors were reported.
+
+## 2026-08-30 - T08 publication commit permission boundary
+
+- The first Lightroom MCP T08 commit attempt failed before creating a commit:
+  Git could not create the shared-worktree index lock at
+  `D:\photo\lightroom-mcp-john\.git\worktrees\lightroom-mcp-roadmap-integration\index.lock`
+  (`Permission denied`). Read-only ACL inspection showed the integration
+  worktree index is physically under the configured checkout. No source file,
+  configured checkout state, or branch ref was changed by the failed attempt.
+- A second attempt with a worktree-local temporary index avoided the index-lock
+  path but failed before staging because the shared repository object database
+  also denied writes (`insufficient permission for adding an object`). The
+  temporary index was removed; no commit or source/configured-checkout change
+  resulted.

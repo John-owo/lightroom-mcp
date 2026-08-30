@@ -15,6 +15,7 @@ const EXPECTED_TOOL_NAMES = [
   'get_selected_photos',
   'get_photo_metadata',
   'create_virtual_copy',
+  'reconcile_virtual_copy',
   'list_collections',
   'create_collection',
   'add_to_collection',
@@ -33,8 +34,8 @@ const EXPECTED_TOOL_NAMES = [
 ] as const;
 
 describe('TOOL_DEFINITIONS', () => {
-  it('contains exactly 19 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(19);
+  it('contains exactly 20 tools', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(20);
   });
 
   it('tool names are unique', () => {
@@ -91,6 +92,7 @@ describe('tool required fields', () => {
   it.each<[string, string[]]>([
     ['get_photo_metadata', ['photo_id']],
     ['create_virtual_copy', ['source_photo_id', 'expected_source_uuid', 'operation_id']],
+    ['reconcile_virtual_copy', ['source_photo_id', 'expected_source_uuid', 'operation_id']],
     ['create_collection', ['name']],
     ['add_to_collection', ['collection_name', 'photo_ids']],
     ['set_keywords', ['photo_ids']],
@@ -217,6 +219,35 @@ describe('virtual copy creation contract', () => {
       concurrency: 'exclusive_backend',
       retry_policy: 'readback_before_retry',
       safe_to_resume: false,
+    });
+  });
+});
+
+describe('virtual copy reconciliation contract', () => {
+  it('exposes a read-only operation-marker query with no selection or editor requirement', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'reconcile_virtual_copy');
+    const metadata = tool?._meta as Record<string, unknown> | undefined;
+    const semantics = metadata?.[OPERATION_SEMANTICS_META_KEY] as Record<string, unknown> | undefined;
+
+    expect(tool?.inputSchema.required).toEqual([
+      'source_photo_id',
+      'expected_source_uuid',
+      'operation_id',
+    ]);
+    expect(tool?.description).toMatch(/read.only/i);
+    expect(tool?.description).toMatch(/never.*creates/i);
+    expect(tool?.outputSchema).toEqual(TOOL_DEFINITIONS.find(
+      (entry) => entry.name === 'create_virtual_copy',
+    )?.outputSchema);
+    expect(semantics).toMatchObject({
+      side_effect: 'read_only',
+      idempotent: true,
+      scope: 'catalog',
+      requires_active_selection: false,
+      requires_editor_foreground: false,
+      concurrency: 'exclusive_backend',
+      retry_policy: 'automatic',
+      safe_to_resume: true,
     });
   });
 });

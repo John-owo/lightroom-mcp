@@ -1475,3 +1475,9 @@ Unverified boundaries:
   also denied writes (`insufficient permission for adding an object`). The
   temporary index was removed; no commit or source/configured-checkout change
   resulted.
+- The first `gh pr create` attempt omitted `--repo`; GitHub CLI resolved the
+  `upstream` repository (`Automaat/lightroom-mcp`) and failed with blank
+  head/base refs and `No commits between main and codex/roadmap-integration`.
+  Explicit read-only ref checks confirmed the intended `origin` repository
+  `John-owo/lightroom-mcp` has `main` at `19431c06ddf7273cb83f6b1e7dd72bcf5fac254a`
+  and the T08 branch at `8ac3e0e2b2aed059f5a94cb3a165fface42a014e`.

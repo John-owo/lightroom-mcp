@@ -18,6 +18,7 @@ local HandlerExport = require 'HandlerExport'
 local HandlerSelection = require 'HandlerSelection'
 local HandlerDevelop = require 'HandlerDevelop'
 local HandlerVirtualCopy = require 'HandlerVirtualCopy'
+local HandlerMask = require 'HandlerMask'
 local Log = require 'Log'
 
 local DEFAULT_REQUEST_PORT = 58763
@@ -149,6 +150,7 @@ local DISPATCH = {
     get_photo_metadata = HandlerMetadata.getPhotoMetadata,
     create_virtual_copy = HandlerVirtualCopy.createVirtualCopy,
     reconcile_virtual_copy = HandlerVirtualCopy.reconcileVirtualCopy,
+    create_mask = HandlerMask.createMask,
     set_keywords = HandlerOrganization.setKeywords,
     set_rating = HandlerOrganization.setRating,
     import_photos = HandlerImport.importPhotos,

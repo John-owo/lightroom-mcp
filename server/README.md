@@ -4,6 +4,15 @@ MCP server bridging Claude / Codex / Cursor to Adobe Lightroom Classic via a bun
 
 The preset round-trip tools can inspect and compare historical Develop presets, create versioned plugin-managed checkpoints from an edited representative photo, and export a preset backing file without overwriting an existing file. Plugin checkpoints are hidden from Lightroom's Develop panel by Adobe SDK design.
 
+The `create_mask` tool is intentionally narrow: it accepts only a
+UUID-verified Workflow Copy, explicit Brush geometry and allowlisted local
+settings, creates a plugin checkpoint before mutation, and reports success
+only after a readback proves the new mask and preservation invariants. The
+Brush adapter is capability-gated by the running Lightroom mask schema;
+Subject and Sky return explicit `unsupported` until an AI payload adapter can
+prove creation and readback. Automated contract/mock coverage is not live
+Lightroom or visual acceptance.
+
 ## Quick install
 
 ### Claude Desktop / Claude Code (one-click)

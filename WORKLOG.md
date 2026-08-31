@@ -1494,3 +1494,74 @@ Unverified boundaries:
   its symlink target. Restored only that target to `CLAUDE.md` so the branch
   can be checked out on Windows. This is a separate CI-baseline repair, not a
   T08 implementation change; no configured checkout was touched.
+
+## 2026-09-01 - T62/T63 mask creation implementation
+
+- Read the referenced Codex task and the scoped T62/T63 handoffs/spec before
+  implementation. The exact source references were
+  `_agent_workspace/lightroom/handoffs/lightroom-mcp-mask-creation-t62-body-20260831.md`,
+  `_agent_workspace/lightroom/handoffs/lightroom-mcp-mask-creation-t63-body-20260831.md`,
+  and `_agent_workspace/lightroom/handoffs/lightroom-mcp-mask-creation-issue-spec-20260831.md`.
+- Created the isolated worktree
+  `D:\photo\_agent_workspace\git-worktrees\lightroom-mcp-t62` on
+  `codex/t62-mask-creation` from roadmap integration base `c29eaa8`.
+  The initial sandboxed `git worktree add` could not write the shared
+  worktree metadata; the approved elevated retry created the worktree. The
+  configured dirty checkout `D:\photo\lightroom-mcp-john` was not used or
+  modified. A junction at the dedicated worktree's `server\node_modules`
+  points to the configured checkout's existing dependencies and is ignored,
+  not staged.
+- An initial `npm.cmd test -- --runInBand` from the worktree root failed with
+  `ENOENT` because `package.json` is under `server`; all later server commands
+  ran from `server`.
+- Added the single `create_mask` contract, strict Brush input/output schemas,
+  operation safety metadata, MCP dispatch/transport coverage, and README
+  boundaries. Added `HandlerMask.lua` plus the pure `MaskAdapter.lua` for
+  Workflow Copy identity checks, capability manifest, allowlisted Brush
+  construction, unique non-overwriting plugin checkpoint, serialized
+  selection-sensitive write, exact mask-tree/global-Develop preservation,
+  SDK readback, and same-operation reconciliation. Subject and Sky remain
+  explicit `unsupported` until a real AI adapter can prove payload creation
+  and readback.
+- Added Lua behavior coverage for creation, idempotent reconciliation,
+  timeout-after-write reconciliation, Develop drift, checkpoint readback
+  mismatch, Subject/Sky refusal, unknown schema, old runtime, identity safety,
+  and invalid/nested/non-finite/range inputs. Added MCP-level typed result and
+  output-drift integration coverage.
+- Red-to-green server contract checks first exposed the expected missing
+  `create_mask` dispatch/count; after implementation the targeted suites passed
+  3 suites / 83 tests, and the final full suite passed 16 suites / 179 tests.
+- `mise` was unavailable on PATH and direct official Busted execution was
+  blocked by the prepared runtime's missing LuaFileSystem dependency. The
+  prepared Lua 5.4.6 fallback runner was used as an explicitly non-official
+  substitute: the targeted HandlerMask run showed 10 visible PASS / 0 FAIL;
+  the full 14-file sweep showed 165 visible PASS / 0 FAIL. `luac.exe -p`
+  parsed 35 Lua files, and Selene 0.31.0 reported 0 errors, 0 warnings, and
+  0 parse errors.
+- After review, tightened checkpoint recovery to fail closed on an ambiguous
+  same-name checkpoint after a reported creation error and to verify the
+  created checkpoint name before trusting it. Final `npm.cmd run check`,
+  `npm.cmd run lint`, and `npm.cmd run build` all passed. Final `git diff
+  --check` returned no whitespace errors; Git emitted only the known
+  LF-to-CRLF working-copy normalization warnings.
+- Live Lightroom round-trip, Lightroom readback on a real catalog, before /
+  after render technical checks, and the user's human visual gate were not
+  performed in this task. Therefore no live mask acceptance or issue
+  completion is claimed; no push, PR, issue mutation, source-file/XMP write,
+  or configured-checkout change was performed.
+- The first final `git add -- <scoped paths>` attempt failed before staging
+  because the shared worktree index lock at
+  `D:\photo\lightroom-mcp-john\.git\worktrees\lightroom-mcp-t62\index.lock`
+  was denied. No index or source change resulted from that failed attempt.
+
+## 2026-09-01 - T62/T63 commit verification
+
+- `git commit -m "feat: add verified mask creation"` succeeded as
+  `525f06f` with the 13 scoped files listed above.
+- Post-commit `git status --short --branch` reported only
+  `## codex/t62-mask-creation`; the isolated worktree was clean.
+- Post-commit `git show --stat --oneline --summary HEAD` confirmed the same
+  13-file, 2462-insertion / 11-deletion commit. This verification record is
+  folded into that commit by staging only `WORKLOG.md` and using
+  `git commit --amend --no-edit`; no source or configured-checkout file is
+  changed by the amendment.

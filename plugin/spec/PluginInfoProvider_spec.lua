@@ -7,7 +7,7 @@ local helper = require 'spec_helper'
 local HANDLER_MODULES = {
     'JSON', 'HandlerSearch', 'HandlerCollections', 'HandlerMetadata',
     'HandlerOrganization', 'HandlerImport', 'HandlerExport',
-    'HandlerSelection', 'HandlerDevelop', 'HandlerVirtualCopy',
+    'HandlerSelection', 'HandlerDevelop', 'HandlerVirtualCopy', 'HandlerMask',
 }
 
 -- opts (all optional) let a test drive the otherwise-async server task:

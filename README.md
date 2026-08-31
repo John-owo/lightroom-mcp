@@ -84,6 +84,7 @@ style_status, lighting_cluster, confidence, notes
 | `compare_develop_presets` | 產生 base／candidate 的逐設定差異 |
 | `create_develop_preset` | 從代表照片選定欄位建立版本化 checkpoint |
 | `export_develop_preset` | 複製 Lightroom preset backing file，永不覆寫既有檔案 |
+| `create_mask` | 在 identity-verified Workflow Copy 上建立或 reconcile 一個明確 schema 的 mask；Brush 受 runtime capability gate，Subject／Sky 未具備可驗證 AI adapter 時回傳 `unsupported` |
 
 既有的 `list_develop_presets` 與 `apply_develop_preset` 也支援 UUID、folder、scope；`set_develop_settings`、`copy_develop_settings` 與 checkpoint 建立支援主曲線及 RGB point-curve arrays。
 
@@ -122,7 +123,7 @@ args = ['D:\path\to\lightroom-mcp\server\dist\index.js']
 startup_timeout_sec = 60
 ```
 
-重新啟動 Codex，新的 task 才會載入 20 個工具。
+重新啟動 Codex，新的 task 才會載入 21 個工具。
 
 ### 4. 安裝 v2 skill
 
@@ -149,7 +150,8 @@ Copy-Item -Path "$skillSource\*" -Destination $skillTarget -Recurse -Force
 - 不在未批准的 master edit 上測試。
 - 不只看相機 JPG 就宣稱色彩或 preset 已完成。
 - 不把 crop、白平衡、profile、鏡頭狀態或 detail 設定默默複製到整批。
-- MCP 的 `create_virtual_copy` 只接受穩定 catalog ID、預期 Master UUID 與可重用的 operation ID，並以 identity readback 和 marker reconciliation 防止盲目重複建立；`reconcile_virtual_copy` 是只讀 recovery query，只掃描 exact marker、驗證 Master／Copy 關係，不改 selection 也不建立 Copy。兩者已有 contract、mock 與 transport integration 測試，但新的只讀 endpoint 尚未完成 Lightroom Classic 實機驗收。MCP 仍沒有 snapshot、undo 或完整局部工具；需要遮罩、修復、AI Denoise、Calibration、Color Grading 或 Point Color 時，交回 Lightroom 手動完成。
+- MCP 的 `create_virtual_copy` 只接受穩定 catalog ID、預期 Master UUID 與可重用的 operation ID，並以 identity readback 和 marker reconciliation 防止盲目重複建立；`reconcile_virtual_copy` 是只讀 recovery query，只掃描 exact marker、驗證 Master／Copy 關係，不改 selection 也不建立 Copy。`create_mask` 只接受 identity-verified Workflow Copy，使用明確的 Brush path／size／feather／flow／density schema，先建立不覆寫的 plugin checkpoint，再以 serialized selection、完整 mask-tree／global-Develop preservation 與 SDK readback 決定成功；Subject／Sky 在未具備可驗證 AI adapter 時會明確回傳 `unsupported`。這些新增行為已有 contract、mock 與 transport coverage，但尚未完成 Lightroom Classic 實機 round-trip、render 與使用者視覺驗收，因此不能宣稱 live mask 已完成。
+- MCP 沒有 true undo；checkpoint 是 recovery evidence，不等於 Lightroom undo。需要修復、AI Denoise、Calibration、Color Grading 或 Point Color 時，交回 Lightroom 手動完成。
 - MCP checkpoint 的 backing format 由 Lightroom 決定；內建 preset 若沒有 backing file，不能匯出。
 
 ## 已驗證範圍

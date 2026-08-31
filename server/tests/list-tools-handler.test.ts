@@ -16,6 +16,7 @@ const EXPECTED_TOOL_NAMES = [
   'get_photo_metadata',
   'create_virtual_copy',
   'reconcile_virtual_copy',
+  'create_mask',
   'list_collections',
   'create_collection',
   'add_to_collection',
@@ -34,8 +35,8 @@ const EXPECTED_TOOL_NAMES = [
 ] as const;
 
 describe('TOOL_DEFINITIONS', () => {
-  it('contains exactly 20 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(20);
+  it('contains exactly 21 tools', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(21);
   });
 
   it('tool names are unique', () => {
@@ -93,6 +94,16 @@ describe('tool required fields', () => {
     ['get_photo_metadata', ['photo_id']],
     ['create_virtual_copy', ['source_photo_id', 'expected_source_uuid', 'operation_id']],
     ['reconcile_virtual_copy', ['source_photo_id', 'expected_source_uuid', 'operation_id']],
+    ['create_mask', [
+      'photo_id',
+      'expected_photo_uuid',
+      'expected_master_uuid',
+      'operation_id',
+      'mask_kind',
+      'name',
+      'kind_parameters',
+      'local_settings',
+    ]],
     ['create_collection', ['name']],
     ['add_to_collection', ['collection_name', 'photo_ids']],
     ['set_keywords', ['photo_ids']],
@@ -248,6 +259,124 @@ describe('virtual copy reconciliation contract', () => {
       concurrency: 'exclusive_backend',
       retry_policy: 'automatic',
       safe_to_resume: true,
+    });
+  });
+});
+
+describe('mask creation contract', () => {
+  it('exposes one strict, capability-gated operation for one Workflow Copy mask', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'create_mask');
+    const properties = tool?.inputSchema.properties as Record<string, {
+      type?: string;
+      enum?: string[];
+      pattern?: string;
+      minLength?: number;
+      maxLength?: number;
+      additionalProperties?: boolean;
+      properties?: Record<string, unknown>;
+      oneOf?: Array<Record<string, unknown>>;
+    }>;
+    const metadata = tool?._meta as Record<string, unknown> | undefined;
+    const semantics = metadata?.[OPERATION_SEMANTICS_META_KEY] as Record<string, unknown> | undefined;
+
+    expect(tool).toBeDefined();
+    expect(tool?.description).toMatch(/Workflow Copy/i);
+    expect(tool?.description).toMatch(/checkpoint/i);
+    expect(tool?.description).toMatch(/readback/i);
+    expect(tool?.inputSchema.required).toEqual([
+      'photo_id',
+      'expected_photo_uuid',
+      'expected_master_uuid',
+      'operation_id',
+      'mask_kind',
+      'name',
+      'kind_parameters',
+      'local_settings',
+    ]);
+    expect(properties.photo_id).toMatchObject({ type: 'string', pattern: '^[0-9]+$' });
+    expect(properties.expected_photo_uuid).toMatchObject({ type: 'string', minLength: 1 });
+    expect(properties.expected_master_uuid).toMatchObject({ type: 'string', minLength: 1 });
+    expect(properties.operation_id).toMatchObject({
+      type: 'string',
+      minLength: 1,
+      maxLength: 64,
+      pattern: '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$',
+    });
+    expect(properties.mask_kind).toMatchObject({
+      type: 'string',
+      enum: ['brush', 'subject', 'sky'],
+    });
+    expect(properties.name).toMatchObject({
+      type: 'string',
+      minLength: 1,
+      maxLength: 128,
+    });
+    expect(properties.kind_parameters).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+    });
+    expect(properties.local_settings).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+    });
+    const parameterBranches = properties.kind_parameters?.oneOf as Array<{
+      properties?: Record<string, unknown>;
+      required?: string[];
+      maxProperties?: number;
+    }>;
+    expect(parameterBranches).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        required: expect.arrayContaining([
+          'coordinate_system',
+          'coordinate_units',
+          'path',
+          'size',
+          'feather',
+          'flow',
+          'density',
+        ]),
+      }),
+      expect.objectContaining({ maxProperties: 0 }),
+    ]));
+    expect(properties.local_settings?.properties).toEqual(expect.objectContaining({
+      exposure: expect.objectContaining({ minimum: -5, maximum: 5 }),
+      clarity: expect.objectContaining({ minimum: -100, maximum: 100 }),
+    }));
+    expect(tool?.outputSchema).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: expect.arrayContaining([
+        'operation_id',
+        'result',
+        'capability',
+        'selection_restoration',
+      ]),
+    });
+    expect(tool?.outputSchema?.oneOf).toEqual(expect.arrayContaining([
+      expect.objectContaining({ required: expect.arrayContaining([
+        'mask_id',
+        'geometry',
+        'checkpoint',
+        'preservation',
+      ]) }),
+      expect.objectContaining({
+        properties: { result: { enum: ['unsupported'] } },
+        required: ['reason'],
+      }),
+      expect.objectContaining({
+        properties: { result: { enum: ['REVIEW_REQUIRED'] } },
+        required: ['reason'],
+      }),
+    ]));
+    expect(semantics).toMatchObject({
+      side_effect: 'mutating',
+      reversible: 'checkpoint_only',
+      scope: 'photo',
+      requires_active_selection: true,
+      requires_editor_foreground: true,
+      concurrency: 'exclusive_backend',
+      retry_policy: 'readback_before_retry',
+      safe_to_resume: false,
     });
   });
 });

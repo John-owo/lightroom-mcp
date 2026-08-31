@@ -188,6 +188,302 @@ const operationId = {
   description: "ASCII reconciliation token (1-64 characters); reuse the same operation ID for reconciliation and never treat a transport request ID as blind retry authorization",
 };
 
+const maskKinds = ["brush", "subject", "sky"] as const;
+
+const brushKindParametersSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    coordinate_system: {
+      type: "string",
+      enum: ["normalized_image"],
+      description: "Image coordinates with the top-left at (0,0) and bottom-right at (1,1)",
+    },
+    coordinate_units: {
+      type: "string",
+      enum: ["unit_interval"],
+      description: "All path coordinates are unit-interval fractions, not pixels",
+    },
+    path: {
+      type: "array",
+      minItems: 1,
+      maxItems: 4096,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          x: { type: "number", minimum: 0, maximum: 1 },
+          y: { type: "number", minimum: 0, maximum: 1 },
+        },
+        required: ["x", "y"],
+      },
+      description: "Ordered brush dabs in normalized image coordinates",
+    },
+    size: {
+      type: "number",
+      exclusiveMinimum: 0,
+      maximum: 1,
+      description: "Brush radius as a fraction of the shorter image edge",
+    },
+    feather: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description: "Brush feather as a fraction from 0 (hard) to 1 (soft)",
+    },
+    flow: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description: "Brush flow as a unit-interval fraction",
+    },
+    density: {
+      type: "number",
+      minimum: 0,
+      maximum: 1,
+      description: "Brush density as a unit-interval fraction",
+    },
+  },
+  required: [
+    "coordinate_system",
+    "coordinate_units",
+    "path",
+    "size",
+    "feather",
+    "flow",
+    "density",
+  ],
+};
+
+const aiKindParametersSchema = {
+  type: "object",
+  additionalProperties: false,
+  maxProperties: 0,
+  description: "Lightroom supplies AI geometry; caller-supplied opaque AI payloads are not accepted",
+};
+
+const maskKindParametersSchema = {
+  type: "object",
+  properties: brushKindParametersSchema.properties,
+  additionalProperties: false,
+  oneOf: [
+    brushKindParametersSchema,
+    aiKindParametersSchema,
+  ],
+};
+
+const maskLocalSettingProperties = {
+  exposure: { type: "number", minimum: -5, maximum: 5 },
+  contrast: { type: "number", minimum: -100, maximum: 100 },
+  highlights: { type: "number", minimum: -100, maximum: 100 },
+  shadows: { type: "number", minimum: -100, maximum: 100 },
+  whites: { type: "number", minimum: -100, maximum: 100 },
+  blacks: { type: "number", minimum: -100, maximum: 100 },
+  temperature: { type: "number", minimum: -100, maximum: 100 },
+  tint: { type: "number", minimum: -100, maximum: 100 },
+  texture: { type: "number", minimum: -100, maximum: 100 },
+  clarity: { type: "number", minimum: -100, maximum: 100 },
+  dehaze: { type: "number", minimum: -100, maximum: 100 },
+  saturation: { type: "number", minimum: -100, maximum: 100 },
+  sharpness: { type: "number", minimum: -100, maximum: 100 },
+  luminance_noise: { type: "number", minimum: -100, maximum: 100 },
+  moire: { type: "number", minimum: -100, maximum: 100 },
+  defringe: { type: "number", minimum: -100, maximum: 100 },
+  hue: { type: "number", minimum: -100, maximum: 100 },
+};
+
+const maskLocalSettingsSchema = {
+  type: "object",
+  additionalProperties: false,
+  minProperties: 1,
+  properties: maskLocalSettingProperties,
+  description: "Allowlisted local adjustment values; values use Lightroom's documented slider ranges",
+};
+
+const maskIdentityOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    catalog_id: catalogPhotoId,
+    uuid: { type: "string", minLength: 1 },
+    path: { type: "string" },
+    filename: { type: "string" },
+    copy_name: { type: "string" },
+    is_virtual_copy: { enum: [true] },
+  },
+  required: ["catalog_id", "uuid", "is_virtual_copy"],
+};
+
+const maskCapabilityKindSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    supported: { type: "boolean" },
+    accepted_parameters: { type: "array", items: { type: "string" } },
+    readback_guarantees: { type: "array", items: { type: "string" } },
+    reason: { type: "string" },
+  },
+  required: ["supported", "accepted_parameters", "readback_guarantees"],
+};
+
+const maskCapabilityOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    lightroom_version: { type: "string", minLength: 1 },
+    process_version: { type: "string", minLength: 1 },
+    mask_schema: { type: "string", minLength: 1 },
+    kinds: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        brush: maskCapabilityKindSchema,
+        subject: maskCapabilityKindSchema,
+        sky: maskCapabilityKindSchema,
+      },
+      required: ["brush", "subject", "sky"],
+    },
+  },
+  required: ["lightroom_version", "process_version", "mask_schema", "kinds"],
+};
+
+const maskSelectionRestorationOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    status: {
+      type: "string",
+      enum: ["restored", "not_needed", "not_attempted", "failed"],
+    },
+    verified: { type: "boolean" },
+    reason: { type: "string" },
+  },
+  required: ["status"],
+};
+
+const maskCheckpointOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    name: { type: "string", minLength: 1 },
+    uuid: { type: "string", minLength: 1 },
+    scope: { enum: ["plugin"] },
+    recovery_evidence: { enum: [true] },
+    true_undo: { enum: [false] },
+  },
+  required: ["name", "uuid", "scope", "recovery_evidence", "true_undo"],
+};
+
+const maskGeometryOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    coordinate_system: { type: "string", minLength: 1 },
+    coordinate_units: { type: "string", minLength: 1 },
+    point_count: { type: "integer", minimum: 1 },
+    bounds: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        x_min: { type: "number" },
+        x_max: { type: "number" },
+        y_min: { type: "number" },
+        y_max: { type: "number" },
+      },
+      required: ["x_min", "x_max", "y_min", "y_max"],
+    },
+    ai_payload_present: { type: "boolean" },
+    ai_payload_field_count: { type: "integer", minimum: 0 },
+  },
+  required: ["coordinate_system", "coordinate_units", "point_count", "bounds"],
+};
+
+const maskPreservationOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    exactly_one_mask_added: { enum: [true] },
+    existing_mask_tree_unchanged: { enum: [true] },
+    global_develop_unchanged: { enum: [true] },
+    source_untouched: { enum: [true] },
+    sidecar_untouched: { enum: [true] },
+  },
+  required: [
+    "exactly_one_mask_added",
+    "existing_mask_tree_unchanged",
+    "global_develop_unchanged",
+    "source_untouched",
+    "sidecar_untouched",
+  ],
+};
+
+export const MASK_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    operation_id: operationId,
+    result: {
+      type: "string",
+      enum: ["created", "reconciled", "unsupported", "REVIEW_REQUIRED"],
+    },
+    capability: maskCapabilityOutputSchema,
+    selection_restoration: maskSelectionRestorationOutputSchema,
+    photo: maskIdentityOutputSchema,
+    master: {
+      ...maskIdentityOutputSchema,
+      properties: {
+        ...maskIdentityOutputSchema.properties,
+        is_virtual_copy: { enum: [false] },
+      },
+    },
+    mask_id: { type: "string", minLength: 1 },
+    correction_id: { type: "string", minLength: 1 },
+    name: { type: "string", minLength: 1 },
+    mask_kind: { type: "string", enum: maskKinds },
+    kind_parameters: maskKindParametersSchema,
+    initial_local_settings: maskLocalSettingsSchema,
+    lightroom_version: { type: "string", minLength: 1 },
+    process_version: { type: "string", minLength: 1 },
+    mask_schema: { type: "string", minLength: 1 },
+    geometry: maskGeometryOutputSchema,
+    checkpoint: maskCheckpointOutputSchema,
+    preservation: maskPreservationOutputSchema,
+    reason: { type: "string", minLength: 1 },
+  },
+  required: ["operation_id", "result", "capability", "selection_restoration"],
+  oneOf: [
+    {
+      properties: {
+        result: { enum: ["created", "reconciled"] },
+      },
+      required: [
+        "photo",
+        "master",
+        "mask_id",
+        "correction_id",
+        "name",
+        "mask_kind",
+        "kind_parameters",
+        "initial_local_settings",
+        "lightroom_version",
+        "process_version",
+        "mask_schema",
+        "geometry",
+        "checkpoint",
+        "preservation",
+      ],
+    },
+    {
+      properties: { result: { enum: ["unsupported"] } },
+      required: ["reason"],
+    },
+    {
+      properties: { result: { enum: ["REVIEW_REQUIRED"] } },
+      required: ["reason"],
+    },
+  ],
+};
+
 const photoIdArray = (description: string) => ({
   ...stringArray(description, MAX_BULK_PHOTO_IDS),
   items: catalogPhotoId,
@@ -422,6 +718,67 @@ const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
       "Read-only reconciliation of an interrupted Workflow Copy creation. Scans the catalog for the exact operation marker, validates the expected Master and Copy/Master relationship, and returns one verified Copy or REVIEW_REQUIRED; it never changes selection or creates a Copy.",
     outputSchema: VIRTUAL_COPY_OUTPUT_SCHEMA,
     inputSchema: workflowCopyInputSchema,
+  },
+  {
+    name: "create_mask",
+    luaHandler: "HandlerMask.createMask",
+    description:
+      "Create or reconcile one allowlisted Lightroom mask on one identity-verified Workflow Copy. Requires stable photo and Master UUIDs, an operation ID, explicit structured kind parameters, and allowlisted local settings. The plugin creates a unique checkpoint before mutation, serializes selection-sensitive work, and reports success only after Lightroom readback proves the new mask and preservation; Subject and Sky may return unsupported when runtime AI capability is not verified.",
+    outputSchema: MASK_OUTPUT_SCHEMA,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        photo_id: {
+          ...catalogPhotoId,
+          description: "Stable Lightroom catalog ID of the verified Workflow Copy; paths are not accepted",
+        },
+        expected_photo_uuid: {
+          type: "string",
+          minLength: 1,
+          description: "Expected persistent UUID of the Workflow Copy",
+        },
+        expected_master_uuid: {
+          type: "string",
+          minLength: 1,
+          description: "Expected persistent UUID of the Workflow Copy's Master",
+        },
+        operation_id: operationId,
+        mask_kind: {
+          type: "string",
+          enum: maskKinds,
+          description: "Mask kind; capability is checked again by the running Lightroom plugin",
+        },
+        name: {
+          type: "string",
+          minLength: 1,
+          maxLength: 128,
+          pattern: ".*\\S.*",
+          description: "Non-empty auditable display name; never used as the sole mask identity",
+        },
+        kind_parameters: maskKindParametersSchema,
+        local_settings: maskLocalSettingsSchema,
+      },
+      required: [
+        "photo_id",
+        "expected_photo_uuid",
+        "expected_master_uuid",
+        "operation_id",
+        "mask_kind",
+        "name",
+        "kind_parameters",
+        "local_settings",
+      ],
+      oneOf: maskKinds.map((maskKind) => ({
+        properties: {
+          mask_kind: { enum: [maskKind] },
+          kind_parameters: maskKind === "brush"
+            ? brushKindParametersSchema
+            : aiKindParametersSchema,
+        },
+        required: ["mask_kind", "kind_parameters"],
+      })),
+    },
   },
   {
     name: "list_collections",
@@ -776,6 +1133,14 @@ export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> =
     concurrency: "exclusive_backend",
   }),
   create_virtual_copy: mutatingSemantics("selection", {
+    requires_active_selection: true,
+    requires_editor_foreground: true,
+    concurrency: "exclusive_backend",
+    retry_policy: "readback_before_retry",
+    safe_to_resume: false,
+  }),
+  create_mask: mutatingSemantics("photo", {
+    reversible: "checkpoint_only",
     requires_active_selection: true,
     requires_editor_foreground: true,
     concurrency: "exclusive_backend",

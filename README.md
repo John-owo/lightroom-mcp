@@ -1,14 +1,91 @@
 # Lightroom MCP＋RAW 挑圖調色 Skill v2
 
-這個 fork 最初把 Lightroom MCP 與完整的 `raw-photo-lightroom-preset` v2 skill 放在同一個 repository。v0.1 之後，上層 workflow engine 已抽離至 [`John-owo/photo-agent`](https://github.com/John-owo/photo-agent)。
+讓 Codex、Claude 等 AI client 透過 MCP 操作 Adobe Lightroom Classic，並保留可追蹤、可讀回、不覆寫的安全邊界。
 
-## 專案邊界：這裡是 MCP backend，不是 workflow agent
+## TL;DR
 
-本 repository 負責可獨立使用的 Lightroom Classic 整合層：MCP server、Lua 外掛、catalog／Develop 操作、checkpoint 與 render／export 工具。Claude、Codex 或其他 MCP client 都可直接使用，不需要安裝 PhotoAgent。
+`lightroom-mcp` 是 Lightroom Classic 的本機整合層。它用 Node.js MCP server 連接 Lightroom Lua 外掛，提供 catalog 查詢、評分、關鍵字、Develop 設定、Virtual Copy、preset checkpoint 與匯出工具。這個 fork 也保留 `raw-photo-lightroom-preset` v2 skill，協助你先分群、再用代表照片逐步調色。它可以單獨使用，也能作為 [`photo-agent`](https://github.com/John-owo/photo-agent) 的 backend。
 
-`photo-agent` 負責持久化工作流程狀態、安全／恢復政策、closed-loop 評估、選片、場景分群與整場拍攝編排，並可把本專案當成其中一個 backend。依賴是單向的：`photo-agent -> lightroom-mcp`；本專案不依賴 PhotoAgent。
+目前 server 有 20 個工具。版本化 checkpoint 的建立、讀回與匯出已在一個 Windows Lightroom Classic 環境完成實機驗證；匯出的 preset 仍需在你的 Lightroom 版本重新匯入並檢查畫面，才能確認相容性與風格。
 
-repository 內既有的 `raw-photo-lightroom-preset` 保留為歷史工作流程指引與可獨立使用的 client recipe。新的 workflow engine 功能與 roadmap 放在 `photo-agent`；Lightroom 專用工具與 transport 留在這裡。
+## 目錄
+
+- [功能總覽](#功能總覽)
+- [架構與專案邊界](#架構與專案邊界)
+- [名詞對照](#名詞對照)
+- [快速開始](#快速開始)
+- [環境需求](#環境需求)
+- [Repository 內容](#repository-內容)
+- [v2 挑圖流程](#v2-挑圖流程)
+- [歷史色調迭代流程](#歷史色調迭代流程)
+- [MCP 工具](#mcp-工具)
+- [Windows 安裝](#windows-安裝)
+- [安全邊界](#安全邊界)
+- [已驗證範圍](#已驗證範圍)
+- [進一步文件](#進一步文件)
+
+## 功能總覽
+
+| 功能 | 你可以做什麼 |
+| --- | --- |
+| Catalog 查詢 | 搜尋照片、讀取目前選取項目、metadata 與 Master／Virtual Copy 關係 |
+| 整理照片 | 設定評分、關鍵字、collection，並匯入或匯出照片 |
+| Develop 調整 | 讀取或套用 preset、複製設定、寫入 Lightroom SDK 支援的 Develop 欄位 |
+| Workflow Copy | 依穩定 catalog ID、Master UUID 與 operation ID 建立或查核 Virtual Copy |
+| 版本化 checkpoint | 建立、比較與匯出不覆寫舊版本的 plugin preset |
+| RAW 挑圖與分群 | 用 bundled skill 配對 RAW／JPG、標記狀態，再按光線與用途分群 |
+| Lightroom render | 由 Lightroom 輸出預覽或交付檔，讓 client 比較實際結果 |
+| XMP fallback | MCP 無法使用時建立新的 sidecar；拒絕覆寫來源檔或既有 sidecar |
+
+## 架構與專案邊界
+
+```text
+┌──────────────────────┐   MCP / stdio   ┌──────────────────────┐
+│ Codex、Claude、PhotoAgent │ ◄────────────► │ Node.js MCP server   │
+└──────────────────────┘                 └──────────┬───────────┘
+                                                   │ localhost TCP
+                                            :58763 │ request
+                                            :58764 │ response
+                                                   ▼
+                                        ┌──────────────────────┐
+                                        │ Lightroom Lua 外掛    │
+                                        └──────────┬───────────┘
+                                                   ▼
+                                        Lightroom catalog／Develop
+```
+
+本 repository 負責 MCP server、Lua 外掛、catalog／Develop 操作、checkpoint 與 render／export transport。`photo-agent` 負責工作流程狀態、安全／恢復政策、closed-loop 評估、選片、場景分群與整場拍攝編排。依賴是單向的：`photo-agent -> lightroom-mcp`；本專案不依賴 PhotoAgent。
+
+這個 fork 最初把 Lightroom MCP 與完整的 `raw-photo-lightroom-preset` v2 skill 放在同一個 repository。v0.1 之後，上層 workflow engine 已抽離至 [`John-owo/photo-agent`](https://github.com/John-owo/photo-agent)。repository 內的 skill 保留為可獨立使用的 client recipe 與歷史工作流程指引。
+
+## 名詞對照
+
+| 名詞 | 白話解釋 |
+| --- | --- |
+| MCP（Model Context Protocol） | 讓 AI client 呼叫外部工具的協定；本專案的 server 提供 Lightroom 工具 |
+| XMP sidecar | 放在 RAW 旁邊、記錄調色設定的小檔案；它不改寫 RAW 內容 |
+| checkpoint | 一份有版本名稱的 preset 存檔，用來保留每輪調整與比較差異 |
+| Workflow Copy | 經身分驗證後供自動流程操作的 Lightroom Virtual Copy，Master 保持不動 |
+| `REVIEW_REQUIRED` | 系統無法確認結果時主動停止，交給人檢查，不盲目重試 |
+| closed loop | 每次調整後都由 Lightroom render 或讀回結果，再決定下一步 |
+
+## 快速開始
+
+1. 從 [`John-owo/lightroom-mcp`](https://github.com/John-owo/lightroom-mcp) clone `main`，在 `server/` 執行 `npm ci` 與 `npm run build`。
+2. 執行 `node .\server\dist\index.js install-plugin`，完整重開 Lightroom Classic。
+3. 到「檔案 → 增效模組管理員 → Lightroom MCP」按 **Start Server**。
+4. 把 `server/dist/index.js` 加到 MCP client，重啟 client 後先試「列出我目前的 Lightroom collections」。
+
+完整 PowerShell 指令與 Codex 設定在[Windows 安裝](#windows-安裝)。第一次測試請使用非關鍵照片，先做唯讀查詢。
+
+## 環境需求
+
+| 項目 | 要求 | 備註 |
+| --- | --- | --- |
+| Node.js | 18 以上 | 從原始碼建置 server；CI 目前使用 24.19 |
+| Adobe Lightroom Classic | 可載入本專案 Lua 外掛的版本 | 專案尚未宣稱特定最低版本 |
+| 作業系統 | Windows 或 macOS | 本 fork 的實機驗證紀錄來自 Windows |
+| MCP client | Codex、Claude 或其他相容 client | PhotoAgent 不是必需安裝項目 |
 
 本 fork 的 Lightroom／skill 歷史範圍涵蓋：
 
@@ -76,7 +153,9 @@ style_status, lighting_cluster, confidence, notes
 9. 用 `export_develop_preset` 匯出接受的 checkpoint；若目的檔已存在，工具會拒絕覆寫。
 10. 在目標 Lightroom 版本匯入並檢查後，才能宣稱 preset 相容且視覺結果正確。
 
-## v0.10.0 新增的 MCP 工具
+## MCP 工具
+
+server 目前提供 20 個工具。完整清單與參數 schema 以 [`server/src/tool-contracts.ts`](server/src/tool-contracts.ts) 為準；下表列出本 fork v0.10.0 加入的 preset round-trip 工具：
 
 | 工具 | 功能 |
 |---|---|
@@ -96,7 +175,6 @@ Adobe SDK 建立的 plugin-managed checkpoint 不會出現在 Develop 面板。�
 ```powershell
 git clone https://github.com/John-owo/lightroom-mcp.git
 Set-Location .\lightroom-mcp
-git switch feat/preset-roundtrip
 Set-Location .\server
 npm ci
 npm run build
@@ -154,7 +232,7 @@ Copy-Item -Path "$skillSource\*" -Destination $skillTarget -Recurse -Force
 
 ## 已驗證範圍
 
-- TypeScript：13 suites、160 tests 通過。
+- TypeScript：15 suites、175 tests 通過；type check、lint 與 build 也通過。
 - Lua `HandlerDevelop`：28 個行為測試通過；Selene 0 errors／0 warnings／0 parse errors。
 - Lightroom Classic 實機：建立 checkpoint、精確讀回、匯出 `.lrtemplate`、重複匯出拒絕且原檔 hash 不變，共 5／5 通過。
 - XMP fallback generator：14 tests 通過，並具備副檔名、sidecar、覆寫、原子寫入、schema 與範圍保護。

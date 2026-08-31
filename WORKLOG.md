@@ -1494,3 +1494,33 @@ Unverified boundaries:
   its symlink target. Restored only that target to `CLAUDE.md` so the branch
   can be checked out on Windows. This is a separate CI-baseline repair, not a
   T08 implementation change; no configured checkout was touched.
+
+## 2026-09-01 - README health-report restructuring
+
+- Used the user-supplied README health report as editorial guidance, then
+  verified every version, tool-count, environment, and acceptance claim against
+  `origin/main`, `server/package.json`, CI, tool contracts, and this work log.
+  The review branch `codex/readme-health-report` and its clean worktree were
+  created from fetched `origin/main`; no remote branch, PR, release, issue, or
+  Lightroom/photo state was changed.
+- Reworked the Traditional Chinese and English READMEs with a short TL;DR,
+  linked contents, feature overview, architecture/data-flow diagram, glossary,
+  quick start, and environment table. Preserved the detailed install, tool,
+  safety, troubleshooting, and RAW workflow material. Removed the stale
+  `git switch feat/preset-roundtrip` instruction and documented the verified
+  20-tool surface plus Node.js 18 minimum / Node 24.19 CI baseline.
+- The first sandboxed `git fetch` failed on shared-worktree `FETCH_HEAD`
+  permissions; the approved fetch succeeded. The first worktree-add attempt
+  created the branch but could not write upstream configuration; an approved
+  exact worktree add completed without changing global Git configuration.
+- The first test command failed before Jest started because the clean worktree
+  had no `node_modules`. Default-cache `npm ci` then failed with `EPERM`; a
+  workspace-cache sandbox retry reached the registry but failed with `EACCES`.
+  Approved `npm.cmd ci --cache D:\photo\_agent_workspace\runtime\npm-cache
+  --prefer-offline` completed from the lockfile. npm reported nine dependency
+  vulnerabilities; no unrequested audit fix or dependency change was made.
+- Verification passed: server Jest `15/15` suites and `175/175` tests,
+  `npm.cmd run check`, `npm.cmd run lint`, and `npm.cmd run build`. A read-only
+  Markdown check resolved every relative link and contents anchor in both
+  READMEs. Targeted `git diff --check` passed with only expected LF-to-CRLF
+  warnings.

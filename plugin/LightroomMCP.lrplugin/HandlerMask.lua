@@ -405,14 +405,20 @@ local function successResult(operationId, resultKind, context, capability, check
     }
 end
 
-local function tryReconcile(catalog, photo, beforeSettings, args, ids)
+local function tryReconcile(catalog, photo, beforeSettings, args, ids, lightroomVersion)
     local ok, currentOrError = protected(function()
         return readDevelopSettings(catalog, photo)
     end)
     if not ok then return nil, currentOrError end
     local current = currentOrError
     local reconcileOk, readback = protected(function()
-        local value, err = MaskAdapter.reconcile(beforeSettings, current, args, ids)
+        local value, err = MaskAdapter.reconcile(
+            beforeSettings,
+            current,
+            args,
+            ids,
+            lightroomVersion
+        )
         if not value then error(err, 0) end
         return value
     end)
@@ -463,6 +469,20 @@ function MaskHandler.createMask(args)
         )
     end
 
+    local unverifiedLocalSettings = MaskAdapter.unverifiedPersistentLocalSettings(
+        args.local_settings,
+        capability.lightroom_version,
+        capability.process_version
+    )
+    if #unverifiedLocalSettings > 0 then
+        return unsupportedResult(
+            args.operation_id,
+            capability,
+            "Persistent Brush readback is not live-verified for local settings: "
+                .. table.concat(unverifiedLocalSettings, ", ")
+        )
+    end
+
     local ids = MaskAdapter.identities(args)
     local operationIdentityPresent = MaskAdapter.hasOperationIdentity(context.settings, ids)
     local checkpoint, checkpointSettings, checkpointError = checkpointFor(
@@ -498,11 +518,12 @@ function MaskHandler.createMask(args)
             )
         end
 
-        local priorReadback = MaskAdapter.reconcile(
+        local priorReadback, priorReconcileError = MaskAdapter.reconcile(
             beforeSettings,
             context.settings,
             args,
-            ids
+            ids,
+            capability.lightroom_version
         )
         if priorReadback then
             return successResult(
@@ -522,7 +543,8 @@ function MaskHandler.createMask(args)
                 capability,
                 checkpoint,
                 selectionStatus("not_attempted", false),
-                "Existing checkpoint does not match the current Workflow Copy state"
+                "Existing checkpoint does not match the current Workflow Copy state; reconciliation failed: "
+                    .. tostring(priorReconcileError)
             )
         end
     end
@@ -551,7 +573,11 @@ function MaskHandler.createMask(args)
         if not MaskAdapter.deepEqual(liveBeforeSettings, context.settings) then
             error("Develop settings changed before mask creation", 0)
         end
-        local updatedSettings = MaskAdapter.appendCorrection(liveBeforeSettings, correction)
+        local updatedSettings = MaskAdapter.appendCorrection(
+            liveBeforeSettings,
+            correction,
+            capability.lightroom_version
+        )
         mutationStarted = true
         catalog:withWriteAccessDo("Create Lightroom Mask", function()
             photo:applyDevelopSettings(updatedSettings)
@@ -562,7 +588,8 @@ function MaskHandler.createMask(args)
             photo,
             liveBeforeSettings,
             args,
-            ids
+            ids,
+            capability.lightroom_version
         )
         if not readback then error(reconcileError, 0) end
         return readback
@@ -577,7 +604,14 @@ function MaskHandler.createMask(args)
         if mutationStarted then
             -- Treat an SDK timeout/error after apply as an uncertain commit.
             -- A successful readback is a reconciliation, never a blind retry.
-            local readback = tryReconcile(catalog, photo, context.settings, args, ids)
+            local readback = tryReconcile(
+                catalog,
+                photo,
+                context.settings,
+                args,
+                ids,
+                capability.lightroom_version
+            )
             if readback and restoreOk then
                 Log.warn("Mask write reported an error but readback reconciled the operation")
                 return successResult(

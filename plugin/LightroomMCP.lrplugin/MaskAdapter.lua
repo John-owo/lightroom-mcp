@@ -336,15 +336,41 @@ local function correctionShapeIsKnown(correction)
     return true
 end
 
-function MaskAdapter.schemaSupported(settings)
-    if type(settings) ~= "table" then return false end
-    if settings.EnableMaskGroupBasedCorrections ~= true then return false end
-    local tree = settings.MaskGroupBasedCorrections
-    if not treeIsArray(tree) then return false end
-    for _, correction in ipairs(tree) do
-        if not correctionShapeIsKnown(correction) then return false end
+local function schemaState(settings)
+    if type(settings) ~= "table" then return nil end
+    if settings.EnableMaskGroupBasedCorrections == true
+        and settings.MaskGroupBasedCorrections == nil then
+        return "unmaterialized_empty"
     end
-    return true
+    if settings.EnableMaskGroupBasedCorrections ~= true then return nil end
+    local tree = settings.MaskGroupBasedCorrections
+    if not treeIsArray(tree) then return nil end
+    for _, correction in ipairs(tree) do
+        if not correctionShapeIsKnown(correction) then return nil end
+    end
+    return "materialized"
+end
+
+local function schemaDiagnostic(settings)
+    if type(settings) ~= "table" then return "settings=" .. type(settings) end
+    local enable = settings.EnableMaskGroupBasedCorrections
+    local tree = settings.MaskGroupBasedCorrections
+    local enableShape = enable == nil
+        and "absent"
+        or (type(enable) .. ":" .. tostring(enable))
+    local treeShape = tree == nil
+        and "absent"
+        or type(tree)
+    if type(tree) == "table" then
+        treeShape = treeShape
+            .. ":array=" .. tostring(treeIsArray(tree))
+            .. ":count=" .. tostring(#tree)
+    end
+    return "enable=" .. enableShape .. ", tree=" .. treeShape
+end
+
+function MaskAdapter.schemaSupported(settings)
+    return schemaState(settings) == "materialized"
 end
 
 function MaskAdapter.processVersion(settings)
@@ -356,16 +382,35 @@ function MaskAdapter.processVersion(settings)
     return tostring(value)
 end
 
+local function unmaterializedEmptySchemaKnown(settings, lightroomVersion)
+    return schemaState(settings) == "unmaterialized_empty"
+        and lightroomVersion == "15.5.1"
+        and MaskAdapter.processVersion(settings) == "15.4"
+end
+
+function MaskAdapter.unverifiedPersistentLocalSettings(settings, lightroomVersion, processVersion)
+    if lightroomVersion ~= "15.5.1" or tostring(processVersion) ~= "15.4" then return {} end
+    local verified = { exposure = true }
+    local result = {}
+    for name, _ in pairs(settings or {}) do
+        if not verified[name] then table.insert(result, name) end
+    end
+    table.sort(result)
+    return result
+end
+
 local function majorVersion(version)
     if type(version) ~= "string" then return nil end
     return tonumber(version:match("^(%d+)"))
 end
 
 function MaskAdapter.capability(settings, lightroomVersion, checkpointAvailable, applyAvailable)
-    local schemaKnown = MaskAdapter.schemaSupported(settings)
+    local state = schemaState(settings)
     local processVersion = MaskAdapter.processVersion(settings)
     local runtimeMajor = majorVersion(lightroomVersion)
     local processMajor = majorVersion(processVersion)
+    local unmaterializedEmptyKnown = unmaterializedEmptySchemaKnown(settings, lightroomVersion)
+    local schemaKnown = state == "materialized" or unmaterializedEmptyKnown
     local supported = schemaKnown
         and runtimeMajor ~= nil
         and runtimeMajor >= 11
@@ -374,8 +419,12 @@ function MaskAdapter.capability(settings, lightroomVersion, checkpointAvailable,
         and checkpointAvailable
         and applyAvailable
     local reason
-    if not schemaKnown then
-        reason = "MaskGroupBasedCorrections schema is unavailable or unrecognized"
+    if state == "unmaterialized_empty" and not unmaterializedEmptyKnown then
+        reason = "Unmaterialized empty mask schema is not verified for this Lightroom/process version"
+    elseif not schemaKnown then
+        reason = "MaskGroupBasedCorrections schema is unavailable or unrecognized ("
+            .. schemaDiagnostic(settings)
+            .. ")"
     elseif runtimeMajor == nil or runtimeMajor < 11 then
         reason = "Running Lightroom version does not expose the supported mask schema"
     elseif processMajor == nil or processMajor < 11 then
@@ -420,9 +469,16 @@ function MaskAdapter.capability(settings, lightroomVersion, checkpointAvailable,
     }
 end
 
-function MaskAdapter.appendCorrection(settings, correction)
+function MaskAdapter.appendCorrection(settings, correction, lightroomVersion)
+    local state = schemaState(settings)
+    if not state then fail("MaskGroupBasedCorrections schema is unavailable or unrecognized") end
+    if state == "unmaterialized_empty"
+        and not unmaterializedEmptySchemaKnown(settings, lightroomVersion) then
+        fail("Unmaterialized empty mask schema is not verified for this Lightroom/process version")
+    end
     local updated, supported = cloneSerializable(settings, 0, {})
     if not supported then fail("Develop settings contain unsupported nested values") end
+    updated.EnableMaskGroupBasedCorrections = true
     updated.MaskGroupBasedCorrections = updated.MaskGroupBasedCorrections or {}
     table.insert(updated.MaskGroupBasedCorrections, correction)
     return updated
@@ -432,44 +488,267 @@ local function settingsWithoutMaskTree(settings)
     local result, supported = cloneSerializable(settings, 0, {})
     if not supported then return nil, false end
     result.MaskGroupBasedCorrections = nil
+    result.EnableMaskGroupBasedCorrections = nil
     return result, true
 end
 
-local function maskMatches(mask, expected, args)
-    if type(mask) ~= "table" then return false end
-    if mask.What ~= "Mask/Paint"
-        or mask.MaskSyncID ~= expected.MaskSyncID
-        or mask.MaskName ~= args.name then
-        return false
+local function boundedValue(value)
+    local result = tostring(value)
+    if #result > 96 then return result:sub(1, 96) .. "..." end
+    return result
+end
+
+local function boundedArray(value, maximum)
+    if type(value) ~= "table" then return "<" .. type(value) .. ">" end
+    local results = {}
+    for index, item in ipairs(value) do
+        if index > maximum then
+            table.insert(results, "...")
+            break
+        end
+        table.insert(results, boundedValue(item))
+    end
+    return "[" .. table.concat(results, "|") .. "]"
+end
+
+local function parsedDab(value)
+    if type(value) ~= "string" then return nil end
+    local x, y = value:match("^d%s+([%+%-]?[%d%.]+)%s+([%+%-]?[%d%.]+)$")
+    x, y = tonumber(x), tonumber(y)
+    if not isFiniteNumber(x) or not isFiniteNumber(y) then return nil end
+    return x, y
+end
+
+local function dabsMismatch(actual, expected, parameters)
+    if type(actual) ~= "table" or type(expected) ~= "table" then
+        return "Dabs expected=" .. boundedArray(expected, 16)
+            .. " actual=" .. boundedArray(actual, 16)
+    end
+    local actualIndex = 1
+    local flow = type(actual[1]) == "string"
+        and tonumber(actual[1]:match("^f%s+([%+%-]?[%d%.]+)$"))
+        or nil
+    if flow ~= nil then
+        if not isFiniteNumber(flow) or not numbersEqual(flow, parameters.flow) then
+            return "Dabs flow expected=" .. boundedValue(parameters.flow)
+                .. " actual=" .. boundedValue(flow)
+        end
+        actualIndex = 2
+    end
+    if (#actual - actualIndex + 1) ~= #expected then
+        return "Dabs expected=" .. boundedArray(expected, 16)
+            .. " actual=" .. boundedArray(actual, 16)
+    end
+    for expectedIndex, expectedDab in ipairs(expected) do
+        local actualDab = actual[actualIndex + expectedIndex - 1]
+        local actualX, actualY = parsedDab(actualDab)
+        local expectedX, expectedY = parsedDab(expectedDab)
+        if actualX == nil or expectedX == nil
+            or not numbersEqual(actualX, expectedX)
+            or not numbersEqual(actualY, expectedY) then
+            return "Dabs expected=" .. boundedArray(expected, 16)
+                .. " actual=" .. boundedArray(actual, 16)
+        end
+    end
+    return nil
+end
+
+local function normalizedFeather(mask, allowCenterWeightFallback)
+    if not mask or type(mask) ~= "table" then return nil end
+    if mask.Feather ~= nil then
+        if isFiniteNumber(mask.Feather) then return mask.Feather end
+        return nil
+    end
+    if allowCenterWeightFallback and isFiniteNumber(mask.CenterWeight) then
+        return 1 - mask.CenterWeight
+    end
+    return nil
+end
+
+local function maskPayloadMismatch(mask, expected, args, allowCenterWeightFallback)
+    if type(mask) ~= "table" then return "mask_type=" .. type(mask) end
+    if mask.What ~= "Mask/Paint" then
+        return "What expected=Mask/Paint actual=" .. boundedValue(mask.What)
+    end
+    if mask.MaskActive ~= true then
+        return "MaskActive expected=true actual=" .. boundedValue(mask.MaskActive)
+    end
+    if mask.MaskInverted ~= nil and mask.MaskInverted ~= false then
+        return "MaskInverted expected=false actual=" .. boundedValue(mask.MaskInverted)
+    end
+    if mask.MaskBlendMode ~= nil and not numbersEqual(mask.MaskBlendMode, 0) then
+        return "MaskBlendMode expected=0 actual=" .. boundedValue(mask.MaskBlendMode)
+    end
+    if mask.MaskName ~= args.name then
+        return "MaskName expected=" .. boundedValue(args.name)
+            .. " actual=" .. boundedValue(mask.MaskName)
     end
     local parameters = args.kind_parameters
-    if not deepEqual(mask.Dabs, expected.Dabs)
-        or not numbersEqual(mask.Radius, parameters.size)
-        or not numbersEqual(mask.Feather, parameters.feather)
-        or not numbersEqual(mask.Flow, parameters.flow)
-        or not numbersEqual(mask.MaskValue, parameters.density)
-        or not numbersEqual(mask.CenterWeight, 1 - parameters.feather) then
-        return false
+    local dabError = dabsMismatch(mask.Dabs, expected.Dabs, parameters)
+    if dabError then return dabError end
+    local numericFields = {
+        { "Radius", parameters.size },
+        { "Feather", parameters.feather, normalizedFeather(mask, allowCenterWeightFallback) },
+        { "Flow", parameters.flow },
+        { "MaskValue", parameters.density },
+        { "CenterWeight", 1 - parameters.feather },
+    }
+    for _, field in ipairs(numericFields) do
+        local actual = field[3] == nil and mask[field[1]] or field[3]
+        if not numbersEqual(actual, field[2]) then
+            return field[1] .. " expected=" .. boundedValue(field[2])
+                .. " actual=" .. boundedValue(actual)
+        end
     end
-    return true
+    return nil
+end
+
+local function maskPayloadMatches(mask, expected, args, allowCenterWeightFallback)
+    return maskPayloadMismatch(mask, expected, args, allowCenterWeightFallback) == nil
+end
+
+local IMPLICIT_LOCAL_DEFAULTS = {
+    LocalCurveRefineSaturation = 100,
+}
+
+local function localSettingsMismatch(correction, settings)
+    if type(correction) ~= "table" then return "correction_type=" .. type(correction) end
+    local expectedKeys = {}
+    for name, expected in pairs(settings) do
+        local descriptor = LOCAL_SETTINGS[name]
+        expectedKeys[descriptor.key] = true
+        if not numbersEqual(correction[descriptor.key], expected) then
+            return descriptor.key .. " expected=" .. boundedValue(expected)
+                .. " actual=" .. boundedValue(correction[descriptor.key])
+        end
+    end
+    for _, descriptor in pairs(LOCAL_SETTINGS) do
+        local key = descriptor.key
+        if not expectedKeys[key] and correction[key] ~= nil
+            and not numbersEqual(correction[key], 0) then
+            return key .. " was not requested; actual=" .. boundedValue(correction[key])
+        end
+    end
+    for key, value in pairs(correction) do
+        if type(key) == "string" and key:match("^Local")
+            and not expectedKeys[key] then
+            local known = false
+            for _, descriptor in pairs(LOCAL_SETTINGS) do
+                if descriptor.key == key then
+                    known = true
+                    break
+                end
+            end
+            if not known then
+                local implicitDefault = IMPLICIT_LOCAL_DEFAULTS[key]
+                if implicitDefault == nil or not numbersEqual(value, implicitDefault) then
+                    return key .. " is not a verified implicit default; actual=" .. boundedValue(value)
+                end
+            end
+        end
+    end
+    return nil
 end
 
 local function localSettingsMatch(correction, settings)
-    for name, expected in pairs(settings) do
-        local descriptor = LOCAL_SETTINGS[name]
-        if not numbersEqual(correction[descriptor.key], expected) then return false end
+    return localSettingsMismatch(correction, settings) == nil
+end
+
+local function correctionPayloadMismatch(correction, args)
+    if type(correction) ~= "table" then return "correction_type=" .. type(correction) end
+    if correction.What ~= "Correction" then
+        return "What expected=Correction actual=" .. boundedValue(correction.What)
     end
-    return true
+    if correction.CorrectionActive ~= true then
+        return "CorrectionActive expected=true actual=" .. boundedValue(correction.CorrectionActive)
+    end
+    if not numbersEqual(correction.CorrectionAmount, 1) then
+        return "CorrectionAmount expected=1 actual=" .. boundedValue(correction.CorrectionAmount)
+    end
+    return localSettingsMismatch(correction, args.local_settings)
+end
+
+local function correctionPayloadMatches(correction, args)
+    return correctionPayloadMismatch(correction, args) == nil
+end
+
+local function boundedLocalKeyValues(correction)
+    if type(correction) ~= "table" then return "<" .. type(correction) .. ">" end
+    local keys = {}
+    for key, _ in pairs(correction) do
+        if type(key) == "string" and key:match("^Local") then table.insert(keys, key) end
+    end
+    table.sort(keys)
+    local results = {}
+    for index, key in ipairs(keys) do
+        if index > 32 then
+            table.insert(results, "...")
+            break
+        end
+        table.insert(results, key .. "=" .. boundedValue(correction[key]))
+    end
+    return "[" .. table.concat(results, ",") .. "]"
+end
+
+local function boundedCorrectionKeyValues(correction)
+    if type(correction) ~= "table" then return "<" .. type(correction) .. ">" end
+    local keys = {}
+    for key, _ in pairs(correction) do
+        if type(key) == "string" then table.insert(keys, key) end
+    end
+    table.sort(keys)
+    local results = {}
+    for index, key in ipairs(keys) do
+        if index > 64 then
+            table.insert(results, "...")
+            break
+        end
+        local value = correction[key]
+        table.insert(results, key .. "=" .. (type(value) == "table"
+            and "<table:" .. tostring(#value) .. ">"
+            or boundedValue(value)))
+    end
+    return "[" .. table.concat(results, ",") .. "]"
+end
+
+local function boundedMaskKeyValues(mask)
+    if type(mask) ~= "table" then return "<" .. type(mask) .. ">" end
+    local keys = {}
+    for key, _ in pairs(mask) do
+        if type(key) == "string" then table.insert(keys, key) end
+    end
+    table.sort(keys)
+    local results = {}
+    for index, key in ipairs(keys) do
+        if index > 64 then
+            table.insert(results, "...")
+            break
+        end
+        local value = mask[key]
+        table.insert(results, key .. "=" .. (type(value) == "table"
+            and "<table:" .. tostring(#value) .. ">"
+            or boundedValue(value)))
+    end
+    return "[" .. table.concat(results, ",") .. "]"
 end
 
 local function readbackGeometry(mask)
     if type(mask.Dabs) ~= "table" or not isArray(mask.Dabs, 1) then return nil end
     local bounds = { x_min = 1, x_max = 0, y_min = 1, y_max = 0 }
     local points = {}
-    for _, dab in ipairs(mask.Dabs) do
-        local x, y = tostring(dab):match("^d%s+([%+%-]?[%d%.]+)%s+([%+%-]?[%d%.]+)$")
-        if not x or not y then return nil end
-        x, y = tonumber(x), tonumber(y)
+    local startIndex = 1
+    local normalizedFlow = type(mask.Dabs[1]) == "string"
+        and tonumber(mask.Dabs[1]:match("^f%s+([%+%-]?[%d%.]+)$"))
+        or nil
+    if normalizedFlow ~= nil then
+        if not isFiniteNumber(normalizedFlow) or not numbersEqual(normalizedFlow, mask.Flow) then
+            return nil
+        end
+        startIndex = 2
+    end
+    for index = startIndex, #mask.Dabs do
+        local x, y = parsedDab(mask.Dabs[index])
+        if x == nil then return nil end
         if not isFiniteNumber(x) or not isFiniteNumber(y) or x < 0 or x > 1 or y < 0 or y > 1 then
             return nil
         end
@@ -488,7 +767,7 @@ local function readbackGeometry(mask)
     }
 end
 
-local function readbackParameters(mask)
+local function readbackParameters(mask, allowCenterWeightFallback)
     local geometry = readbackGeometry(mask)
     if not geometry then return nil end
     local path = geometry._points
@@ -498,7 +777,7 @@ local function readbackParameters(mask)
         coordinate_units = "unit_interval",
         path = path,
         size = mask.Radius,
-        feather = mask.Feather,
+        feather = normalizedFeather(mask, allowCenterWeightFallback),
         flow = mask.Flow,
         density = mask.MaskValue,
     }, geometry
@@ -513,7 +792,61 @@ local function readbackLocalSettings(correction, settings)
     return result
 end
 
-function MaskAdapter.reconcile(beforeSettings, currentSettings, args, ids)
+local function boundedIdentityList(tree, key, nestedKey)
+    local values = {}
+    for _, correction in ipairs(tree or {}) do
+        local candidates = nestedKey and correction[nestedKey] or { correction }
+        for _, candidate in ipairs(candidates or {}) do
+            if type(candidate) == "table" and candidate[key] ~= nil then
+                local value = tostring(candidate[key])
+                if #value > 96 then value = value:sub(1, 96) .. "..." end
+                table.insert(values, value)
+                if #values >= 8 then return values end
+            end
+        end
+    end
+    return values
+end
+
+local function identityDiagnostic(tree, ids)
+    local correctionIds = boundedIdentityList(tree, "CorrectionSyncID")
+    local maskIds = boundedIdentityList(tree, "MaskSyncID", "CorrectionMasks")
+    return "expected correction_id=" .. tostring(ids.correction_id)
+        .. ", mask_id=" .. tostring(ids.mask_id)
+        .. "; found correction_ids=[" .. table.concat(correctionIds, ",")
+        .. "], mask_ids=[" .. table.concat(maskIds, ",") .. "]"
+end
+
+local function rewriteDiagnostic(tree, beforeTree, expectedCorrection, args, allowCenterWeightFallback)
+    local results = {}
+    for correctionIndex, correction in ipairs(tree or {}) do
+        if #results >= 4 then break end
+        local masks = type(correction) == "table" and correction.CorrectionMasks or nil
+        local mask = type(masks) == "table" and #masks == 1 and masks[1] or nil
+        local remaining = {}
+        for index, item in ipairs(tree) do
+            if index ~= correctionIndex then table.insert(remaining, item) end
+        end
+        table.insert(results,
+            "index=" .. tostring(correctionIndex)
+            .. ",CorrectionName=" .. boundedValue(type(correction) == "table" and correction.CorrectionName)
+            .. ",mask_count=" .. tostring(type(masks) == "table" and #masks or -1)
+            .. ",payload=" .. (maskPayloadMismatch(
+                mask,
+                expectedCorrection.CorrectionMasks[1],
+                args,
+                allowCenterWeightFallback
+            ) or "ok")
+            .. ",correction=" .. boundedValue(correctionPayloadMismatch(correction, args) or "ok")
+            .. ",local_keys=" .. boundedLocalKeyValues(correction)
+            .. ",correction_keys=" .. boundedCorrectionKeyValues(correction)
+            .. ",mask_keys=" .. boundedMaskKeyValues(mask)
+            .. ",delta=" .. tostring(deepEqual(remaining, beforeTree)))
+    end
+    return "rewrite_candidates=[" .. table.concat(results, ";") .. "]"
+end
+
+function MaskAdapter.reconcile(beforeSettings, currentSettings, args, ids, lightroomVersion)
     if type(beforeSettings) ~= "table" or type(currentSettings) ~= "table" then
         return nil, "Develop settings readback is unavailable"
     end
@@ -523,11 +856,25 @@ function MaskAdapter.reconcile(beforeSettings, currentSettings, args, ids)
         return nil, "Global Develop settings changed while creating the mask"
     end
 
-    local beforeTree = beforeSettings.MaskGroupBasedCorrections
+    local beforeState = schemaState(beforeSettings)
+    local currentState = schemaState(currentSettings)
+    if beforeState == nil or currentState ~= "materialized" then
+        return nil, "MaskGroupBasedCorrections readback is unavailable or unrecognized"
+    end
+    if beforeState == "unmaterialized_empty"
+        and not unmaterializedEmptySchemaKnown(beforeSettings, lightroomVersion) then
+        return nil, "Unmaterialized empty mask schema is not verified for this Lightroom/process version"
+    end
+    local beforeTree = beforeState == "unmaterialized_empty"
+        and {}
+        or beforeSettings.MaskGroupBasedCorrections
     local currentTree = currentSettings.MaskGroupBasedCorrections
     if not treeIsArray(beforeTree) or not treeIsArray(currentTree) then
         return nil, "MaskGroupBasedCorrections readback is not an array"
     end
+    local allowCenterWeightFallback = lightroomVersion == "15.5.1"
+        and MaskAdapter.processVersion(beforeSettings) == "15.4"
+        and MaskAdapter.processVersion(currentSettings) == "15.4"
     local expectedCorrection = MaskAdapter.buildCorrection(args, ids)
     local correctionMatches = {}
     local maskMatchesById = {}
@@ -550,16 +897,70 @@ function MaskAdapter.reconcile(beforeSettings, currentSettings, args, ids)
             end
         end
     end
-    if #correctionMatches ~= 1 or #maskMatchesById ~= 1 then
-        return nil, "Mask operation identity is absent or ambiguous"
+    local match
+    if #correctionMatches == 1 and #maskMatchesById == 1
+        and maskMatchesById[1].correctionIndex == correctionMatches[1].index then
+        match = maskMatchesById[1]
+    else
+        -- Lightroom may replace SDK-supplied SyncIDs when it persists and
+        -- reopens the catalog. Reconcile such a rewrite only from the complete,
+        -- unique checkpoint delta and exact requested payload; a name match
+        -- alone is never ownership evidence.
+        local rewrittenCandidates = {}
+        for correctionIndex, correction in ipairs(currentTree) do
+            local masks = type(correction) == "table" and correction.CorrectionMasks or nil
+            local mask = type(masks) == "table" and #masks == 1 and masks[1] or nil
+            if type(correction.CorrectionSyncID) == "string"
+                and correction.CorrectionSyncID ~= ""
+                and type(mask) == "table"
+                and type(mask.MaskSyncID) == "string"
+                and mask.MaskSyncID ~= ""
+                and correction.CorrectionName == args.name
+                and maskPayloadMatches(
+                    mask,
+                    expectedCorrection.CorrectionMasks[1],
+                    args,
+                    allowCenterWeightFallback
+                )
+                and correctionPayloadMatches(correction, args) then
+                local remainingCandidate = {}
+                for index, item in ipairs(currentTree) do
+                    if index ~= correctionIndex then table.insert(remainingCandidate, item) end
+                end
+                if deepEqual(remainingCandidate, beforeTree) then
+                    table.insert(rewrittenCandidates, {
+                        correctionIndex = correctionIndex,
+                        maskIndex = 1,
+                        correction = correction,
+                        mask = mask,
+                    })
+                end
+            end
+        end
+        if #rewrittenCandidates == 1 then match = rewrittenCandidates[1] end
     end
-    local match = maskMatchesById[1]
-    if match.correctionIndex ~= correctionMatches[1].index
-        or correctionMatches[1].correction.CorrectionName ~= args.name
+    if not match then
+        return nil, "Mask operation identity is absent or ambiguous ("
+            .. identityDiagnostic(currentTree, ids)
+            .. "; " .. rewriteDiagnostic(
+                currentTree,
+                beforeTree,
+                expectedCorrection,
+                args,
+                allowCenterWeightFallback
+            )
+            .. ")"
+    end
+    if match.correction.CorrectionName ~= args.name
         or type(match.correction.CorrectionMasks) ~= "table"
         or #match.correction.CorrectionMasks ~= 1
-        or not maskMatches(match.mask, expectedCorrection.CorrectionMasks[1], args)
-        or not localSettingsMatch(match.correction, args.local_settings) then
+        or not maskPayloadMatches(
+            match.mask,
+            expectedCorrection.CorrectionMasks[1],
+            args,
+            allowCenterWeightFallback
+        )
+        or not correctionPayloadMatches(match.correction, args) then
         return nil, "Mask readback parameters do not match the requested operation"
     end
 
@@ -571,14 +972,14 @@ function MaskAdapter.reconcile(beforeSettings, currentSettings, args, ids)
         return nil, "Existing mask tree changed while creating the mask"
     end
 
-    local parameters, geometry = readbackParameters(match.mask)
+    local parameters, geometry = readbackParameters(match.mask, allowCenterWeightFallback)
     if not parameters then return nil, "Brush geometry readback is unavailable" end
     if not localSettingsMatch(match.correction, args.local_settings) then
         return nil, "Local mask settings readback is unavailable"
     end
     return {
         mask_id = match.mask.MaskSyncID,
-        correction_id = correctionMatches[1].correction.CorrectionSyncID,
+        correction_id = match.correction.CorrectionSyncID,
         name = match.mask.MaskName or correctionMatches[1].correction.CorrectionName,
         mask_kind = "brush",
         kind_parameters = parameters,

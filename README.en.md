@@ -173,9 +173,10 @@ If you'd rather drop the plugin in by hand:
 ## Tools
 
 The server currently exposes 21 tools. Virtual Copy and mask operations have
-automated contract, mock, and transport coverage; Lightroom Classic live
-round-trip, render, and human visual acceptance remain pending for the mask
-operation.
+automated contract, mock, and transport coverage. Brush creation, full
+Lightroom restart/reconciliation, and before/after rendering are live-verified
+on Lightroom Classic 15.5.1 / ProcessVersion 15.4; human visual acceptance is
+still a separate gate.
 
 | Tool | What it does |
 | --- | --- |
@@ -184,7 +185,7 @@ operation.
 | `get_photo_metadata` | Stable catalog ID/UUID, Master and Virtual Copy relationships, EXIF, GPS, IPTC location, copyright + develop settings for one catalog photo. Source paths are display-only and cannot be used as photo selectors. |
 | `create_virtual_copy` | Create or reconcile one identity-verified Virtual Copy by stable catalog ID, expected Master UUID, and operation marker. Ambiguous or partial outcomes fail closed with `REVIEW_REQUIRED`; collection placement is separate. Contract, mock, and transport integration coverage exists, but live Lightroom acceptance is still pending. |
 | `reconcile_virtual_copy` | Read-only recovery query for an interrupted Virtual Copy creation. Scans the exact operation marker, verifies the expected Master and Copy relationship, and returns one Copy or `REVIEW_REQUIRED` without changing selection or creating a Copy. |
-| `create_mask` | Create or reconcile one allowlisted mask on one identity-verified Workflow Copy. Brush uses an explicit normalized path plus size/feather/flow/density parameters; the plugin checkpoints before mutation and succeeds only after mask-tree/global-Develop preservation and readback checks. Subject and Sky return explicit `unsupported` until an AI adapter can prove its payload and readback. Live Lightroom acceptance is still pending. |
+| `create_mask` | Create or reconcile one allowlisted mask on one identity-verified Workflow Copy. Brush uses an explicit normalized path plus size/feather/flow/density parameters; the plugin checkpoints before mutation and succeeds only after mask-tree/global-Develop preservation and readback checks. Lightroom may rewrite SyncIDs, prepend a flow token to Dabs, and persist feather as `CenterWeight`; reconciliation accepts only a unique exact checkpoint delta with those verified normalizations. On Lightroom Classic 15.5.1 / ProcessVersion 15.4, only local Exposure is currently live-verified across restart; other local settings fail before mutation. Subject and Sky return explicit `unsupported` until an AI adapter can prove payload creation and readback. |
 | `list_collections` | All collections and collection sets. |
 | `create_collection` | New collection (optional parent set). |
 | `add_to_collection` | Add photos to a named collection. |

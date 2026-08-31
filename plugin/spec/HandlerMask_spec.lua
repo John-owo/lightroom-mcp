@@ -186,6 +186,158 @@ describe("HandlerMask.createMask", function()
         assert.are.equal("existing-correction", copy.__meta.developSettings.MaskGroupBasedCorrections[1].CorrectionSyncID)
     end)
 
+    it("creates the first Brush when Lightroom has not materialized the empty mask schema", function()
+        local catalog, _, copy, _, Handler, state = setup({
+            lightroomVersion = "15.5.1",
+            copy = {
+                developSettings = {
+                    ProcessVersion = "15.4",
+                    EnableMaskGroupBasedCorrections = true,
+                    Exposure2012 = 0.5,
+                    Contrast2012 = 15,
+                },
+            },
+        })
+
+        local result = Handler.createMask(brushArgs({
+            operation_id = "first-mask-001",
+            local_settings = { exposure = 0.5 },
+        }))
+
+        assert.are.equal("created", result.result)
+        assert.is_true(result.capability.kinds.brush.supported)
+        assert.are.equal("MaskGroupBasedCorrections.v1", result.mask_schema)
+        assert.are.equal(1, catalog:getWriteAccessCount())
+        assert.are.equal(1, state.getAddedPresetCalls())
+        assert.is_true(copy.__meta.developSettings.EnableMaskGroupBasedCorrections)
+        assert.are.equal(1, #copy.__meta.developSettings.MaskGroupBasedCorrections)
+        assert.are.equal(result.correction_id, copy.__meta.developSettings.MaskGroupBasedCorrections[1].CorrectionSyncID)
+        assert.are.equal(0.5, copy.__meta.developSettings.Exposure2012)
+        assert.are.equal(15, copy.__meta.developSettings.Contrast2012)
+        assert.is_true(result.preservation.existing_mask_tree_unchanged)
+        assert.is_true(result.preservation.global_develop_unchanged)
+    end)
+
+    it("keeps an unmaterialized or partial mask schema fail-closed outside the live-verified version pair", function()
+        local cases = {
+            {
+                lightroomVersion = "15.6",
+                developSettings = {
+                    ProcessVersion = "15.4",
+                    EnableMaskGroupBasedCorrections = true,
+                },
+            },
+            {
+                lightroomVersion = "15.5.1",
+                developSettings = {
+                    ProcessVersion = "15.5",
+                    EnableMaskGroupBasedCorrections = true,
+                },
+            },
+            {
+                lightroomVersion = "15.5.1",
+                developSettings = { ProcessVersion = "15.4" },
+            },
+            {
+                lightroomVersion = "15.5.1",
+                developSettings = {
+                    ProcessVersion = "15.4",
+                    MaskGroupBasedCorrections = {},
+                },
+            },
+            {
+                lightroomVersion = "15.5.1",
+                developSettings = {
+                    ProcessVersion = "15.4",
+                    EnableMaskGroupBasedCorrections = false,
+                    MaskGroupBasedCorrections = {},
+                },
+            },
+        }
+
+        for index, item in ipairs(cases) do
+            local catalog, _, _, _, Handler, state = setup({
+                lightroomVersion = item.lightroomVersion,
+                copy = { developSettings = item.developSettings },
+            })
+            local result = Handler.createMask(brushArgs({
+                operation_id = "unverified-empty-schema-" .. tostring(index),
+            }))
+
+            assert.are.equal("unsupported", result.result)
+            assert.is_false(result.capability.kinds.brush.supported)
+            assert.are.equal(0, catalog:getWriteAccessCount())
+            assert.are.equal(0, state.getAddedPresetCalls())
+        end
+    end)
+
+    it("refuses local settings that did not persist across the live-verified restart", function()
+        local catalog, _, _, _, Handler, state = setup({
+            lightroomVersion = "15.5.1",
+            copy = {
+                developSettings = {
+                    ProcessVersion = "15.4",
+                    EnableMaskGroupBasedCorrections = true,
+                },
+            },
+        })
+
+        local result = Handler.createMask(brushArgs())
+
+        assert.are.equal("unsupported", result.result)
+        assert.is_true(result.reason:find("clarity", 1, true) ~= nil)
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(0, state.getAddedPresetCalls())
+    end)
+
+    it("reconciles the first-mask operation without adding a second mask or checkpoint", function()
+        local catalog, _, copy, _, Handler, state = setup({
+            lightroomVersion = "15.5.1",
+            copy = {
+                developSettings = {
+                    ProcessVersion = "15.4",
+                    EnableMaskGroupBasedCorrections = true,
+                },
+            },
+        })
+
+        local request = brushArgs({
+            operation_id = "first-mask-retry",
+            local_settings = { exposure = 0.5 },
+        })
+        local first = Handler.createMask(request)
+        local writes = catalog:getWriteAccessCount()
+        local second = Handler.createMask(request)
+
+        assert.are.equal("created", first.result)
+        assert.are.equal("reconciled", second.result)
+        assert.are.equal(first.mask_id, second.mask_id)
+        assert.are.equal(writes, catalog:getWriteAccessCount())
+        assert.are.equal(1, state.getAddedPresetCalls())
+        assert.are.equal(1, #copy.__meta.developSettings.MaskGroupBasedCorrections)
+    end)
+
+    it("reconciles a first-mask write that reports a timeout after Lightroom applied it", function()
+        local _, _, copy, _, Handler = setup({
+            lightroomVersion = "15.5.1",
+            copy = {
+                developSettings = {
+                    ProcessVersion = "15.4",
+                    EnableMaskGroupBasedCorrections = true,
+                },
+            },
+            failAfterApply = true,
+        })
+
+        local result = Handler.createMask(brushArgs({
+            operation_id = "first-mask-timeout",
+            local_settings = { exposure = 0.5 },
+        }))
+
+        assert.are.equal("reconciled", result.result)
+        assert.are.equal(1, #copy.__meta.developSettings.MaskGroupBasedCorrections)
+    end)
+
     it("reconciles the same operation without adding a second mask or checkpoint", function()
         local catalog, _, copy, _, Handler, state = setup()
         local first = Handler.createMask(brushArgs())
@@ -200,6 +352,352 @@ describe("HandlerMask.createMask", function()
         assert.are.equal(writes, catalog:getWriteAccessCount())
         assert.are.equal(1, state.getAddedPresetCalls())
         assert.are.equal(2, #copy.__meta.developSettings.MaskGroupBasedCorrections)
+    end)
+
+    it("reconciles a unique Lightroom SyncID rewrite from the exact checkpoint delta", function()
+        local operationId = "identity-diagnostic"
+        local before = baseDevelopSettings()
+        local current = clone(before)
+        table.insert(current.MaskGroupBasedCorrections, {
+            What = "Correction",
+            CorrectionActive = true,
+            CorrectionAmount = 1,
+            CorrectionName = "Face lift",
+            CorrectionSyncID = "lightroom-rewritten-correction",
+            CorrectionMasks = {
+                {
+                    What = "Mask/Paint",
+                    MaskActive = true,
+                    MaskInverted = false,
+                    MaskBlendMode = 0,
+                    MaskName = "Face lift",
+                    MaskSyncID = "lightroom-rewritten-mask",
+                    Dabs = { "f 0.7000", "d 0.200000 0.300000", "d 0.400000 0.500000" },
+                    Radius = 0.12,
+                    Feather = 0.35,
+                    Flow = 0.7,
+                    MaskValue = 0.8,
+                    CenterWeight = 0.65,
+                },
+            },
+            LocalExposure2012 = 0.5,
+        })
+        local catalog, _, copy, _, Handler, state = setup({
+            copy = { developSettings = current },
+            pluginPresets = {
+                fakePreset(
+                    "Lightroom MCP Mask Checkpoint [" .. operationId .. "]",
+                    before,
+                    "checkpoint-identity-diagnostic"
+                ),
+            },
+        })
+
+        local result = Handler.createMask(brushArgs({
+            operation_id = operationId,
+            local_settings = { exposure = 0.5 },
+        }))
+
+        assert.are.equal("reconciled", result.result)
+        assert.are.equal("lightroom-rewritten-correction", result.correction_id)
+        assert.are.equal("lightroom-rewritten-mask", result.mask_id)
+        assert.is_true(result.selection_restoration.verified)
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(0, state.getAddedPresetCalls())
+        assert.are.equal(2, #copy.__meta.developSettings.MaskGroupBasedCorrections)
+    end)
+
+    it("reconstructs feather from CenterWeight after Lightroom omits Feather on reopen", function()
+        local operationId = "identity-rewrite-without-feather"
+        local before = baseDevelopSettings()
+        before.ProcessVersion = "15.4"
+        local current = clone(before)
+        table.insert(current.MaskGroupBasedCorrections, {
+            What = "Correction",
+            CorrectionActive = true,
+            CorrectionAmount = 1,
+            CorrectionName = "Face lift",
+            CorrectionSyncID = "lightroom-rewritten-correction",
+            CorrectionMasks = {
+                {
+                    What = "Mask/Paint",
+                    MaskActive = true,
+                    MaskInverted = false,
+                    MaskBlendMode = 0,
+                    MaskName = "Face lift",
+                    MaskSyncID = "lightroom-rewritten-mask",
+                    Dabs = { "f 0.7000", "d 0.200000 0.300000", "d 0.400000 0.500000" },
+                    Radius = 0.12,
+                    Flow = 0.7,
+                    MaskValue = 0.8,
+                    CenterWeight = 0.65,
+                },
+            },
+            LocalExposure2012 = 0.5,
+        })
+        local _, _, _, _, Handler = setup({
+            lightroomVersion = "15.5.1",
+            copy = { developSettings = current },
+            pluginPresets = {
+                fakePreset(
+                    "Lightroom MCP Mask Checkpoint [" .. operationId .. "]",
+                    before,
+                    "checkpoint-identity-rewrite-without-feather"
+                ),
+            },
+        })
+
+        local result = Handler.createMask(brushArgs({
+            operation_id = operationId,
+            local_settings = { exposure = 0.5 },
+        }))
+
+        assert.are.equal("reconciled", result.result)
+        assert.are.equal(0.35, result.kind_parameters.feather)
+        assert.are.equal("lightroom-rewritten-correction", result.correction_id)
+        assert.are.equal("lightroom-rewritten-mask", result.mask_id)
+    end)
+
+    it("does not use CenterWeight for malformed Feather or an unverified runtime", function()
+        local cases = {
+            { label = "malformed", lightroomVersion = "15.5.1", feather = "bad" },
+            { label = "unverified-runtime", lightroomVersion = "15.5.0", feather = nil },
+        }
+        for index, case in ipairs(cases) do
+            local operationId = "feather-fallback-" .. case.label
+            local before = baseDevelopSettings()
+            before.ProcessVersion = "15.4"
+            local current = clone(before)
+            local mask = {
+                What = "Mask/Paint",
+                MaskActive = true,
+                MaskInverted = false,
+                MaskBlendMode = 0,
+                MaskName = "Face lift",
+                MaskSyncID = "rewritten-mask-" .. tostring(index),
+                Dabs = { "f 0.7000", "d 0.200000 0.300000", "d 0.400000 0.500000" },
+                Radius = 0.12,
+                Flow = 0.7,
+                MaskValue = 0.8,
+                CenterWeight = 0.65,
+            }
+            mask.Feather = case.feather
+            table.insert(current.MaskGroupBasedCorrections, {
+                What = "Correction",
+                CorrectionActive = true,
+                CorrectionAmount = 1,
+                CorrectionName = "Face lift",
+                CorrectionSyncID = "rewritten-correction-" .. tostring(index),
+                CorrectionMasks = { mask },
+                LocalExposure2012 = 0.5,
+            })
+            local catalog, _, _, _, Handler = setup({
+                lightroomVersion = case.lightroomVersion,
+                copy = { developSettings = current },
+                pluginPresets = {
+                    fakePreset(
+                        "Lightroom MCP Mask Checkpoint [" .. operationId .. "]",
+                        before,
+                        "checkpoint-" .. operationId
+                    ),
+                },
+            })
+
+            local result = Handler.createMask(brushArgs({
+                operation_id = operationId,
+                local_settings = { exposure = 0.5 },
+            }))
+
+            assert.are.equal("REVIEW_REQUIRED", result.result)
+            assert.is_true(result.reason:find("Feather expected=0.35", 1, true) ~= nil)
+            assert.are.equal(0, catalog:getWriteAccessCount())
+        end
+    end)
+
+    it("keeps disabled or semantically changed rewritten payloads fail-closed", function()
+        local cases = {
+            { label = "correction-inactive", mutate = function(correction)
+                correction.CorrectionActive = false
+            end },
+            { label = "correction-amount", mutate = function(correction)
+                correction.CorrectionAmount = 0
+            end },
+            { label = "mask-inactive", mutate = function(correction)
+                correction.CorrectionMasks[1].MaskActive = false
+            end },
+            { label = "mask-inverted", mutate = function(correction)
+                correction.CorrectionMasks[1].MaskInverted = true
+            end },
+            { label = "mask-blend", mutate = function(correction)
+                correction.CorrectionMasks[1].MaskBlendMode = 1
+            end },
+            { label = "extra-local", mutate = function(correction)
+                correction.LocalShadows2012 = 25
+            end },
+            { label = "unknown-local", mutate = function(correction)
+                correction.LocalUnverifiedAdjustment = 1
+            end },
+        }
+        for index, case in ipairs(cases) do
+            local operationId = "semantic-payload-" .. case.label
+            local before = baseDevelopSettings()
+            local current = clone(before)
+            local correction = {
+                What = "Correction",
+                CorrectionActive = true,
+                CorrectionAmount = 1,
+                CorrectionName = "Face lift",
+                CorrectionSyncID = "semantic-correction-" .. tostring(index),
+                CorrectionMasks = {
+                    {
+                        What = "Mask/Paint",
+                        MaskActive = true,
+                        MaskInverted = false,
+                        MaskBlendMode = 0,
+                        MaskName = "Face lift",
+                        MaskSyncID = "semantic-mask-" .. tostring(index),
+                        Dabs = { "d 0.200000 0.300000", "d 0.400000 0.500000" },
+                        Radius = 0.12,
+                        Feather = 0.35,
+                        Flow = 0.7,
+                        MaskValue = 0.8,
+                        CenterWeight = 0.65,
+                    },
+                },
+                LocalExposure2012 = 0.5,
+                LocalClarity2012 = 12,
+            }
+            case.mutate(correction)
+            table.insert(current.MaskGroupBasedCorrections, correction)
+            local catalog, _, _, _, Handler = setup({
+                copy = { developSettings = current },
+                pluginPresets = {
+                    fakePreset(
+                        "Lightroom MCP Mask Checkpoint [" .. operationId .. "]",
+                        before,
+                        "checkpoint-" .. operationId
+                    ),
+                },
+            })
+
+            local result = Handler.createMask(brushArgs({ operation_id = operationId }))
+
+            assert.are.equal("REVIEW_REQUIRED", result.result)
+            assert.are.equal(0, catalog:getWriteAccessCount())
+        end
+    end)
+
+    it("keeps a non-unique Lightroom SyncID rewrite fail-closed with bounded identities", function()
+        local operationId = "ambiguous-identity-rewrite"
+        local before = baseDevelopSettings()
+        local duplicateCandidate = {
+            What = "Correction",
+            CorrectionActive = true,
+            CorrectionAmount = 1,
+            CorrectionName = "Face lift",
+            CorrectionSyncID = "rewritten-correction-duplicate",
+            CorrectionMasks = {
+                {
+                    What = "Mask/Paint",
+                    MaskActive = true,
+                    MaskInverted = false,
+                    MaskBlendMode = 0,
+                    MaskName = "Face lift",
+                    MaskSyncID = "rewritten-mask-duplicate",
+                    Dabs = { "d 0.200000 0.300000", "d 0.400000 0.500000" },
+                    Radius = 0.12,
+                    Feather = 0.35,
+                    Flow = 0.7,
+                    MaskValue = 0.8,
+                    CenterWeight = 0.65,
+                },
+            },
+            LocalExposure2012 = 0.5,
+            LocalClarity2012 = 12,
+        }
+        before.MaskGroupBasedCorrections = { clone(duplicateCandidate) }
+        local current = clone(before)
+        table.insert(current.MaskGroupBasedCorrections, clone(duplicateCandidate))
+        local catalog, _, _, _, Handler = setup({
+            copy = { developSettings = current },
+            pluginPresets = {
+                fakePreset(
+                    "Lightroom MCP Mask Checkpoint [" .. operationId .. "]",
+                    before,
+                    "checkpoint-ambiguous-identity-rewrite"
+                ),
+            },
+        })
+
+        local result = Handler.createMask(brushArgs({ operation_id = operationId }))
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_true(result.reason:match("expected correction_id=") ~= nil)
+        assert.is_true(result.reason:find(
+            "found correction_ids=[rewritten-correction-duplicate,rewritten-correction-duplicate]",
+            1,
+            true
+        ) ~= nil)
+        assert.is_true(result.reason:find("index=1", 1, true) ~= nil)
+        assert.is_true(result.reason:find("index=2", 1, true) ~= nil)
+        assert.are.equal(0, catalog:getWriteAccessCount())
+    end)
+
+    it("reports the first bounded payload mismatch for a rewritten identity", function()
+        local operationId = "rewritten-payload-mismatch"
+        local before = baseDevelopSettings()
+        local current = clone(before)
+        table.insert(current.MaskGroupBasedCorrections, {
+            What = "Correction",
+            CorrectionActive = true,
+            CorrectionAmount = 1,
+            CorrectionName = "Face lift",
+            CorrectionSyncID = "rewritten-correction",
+            CorrectionMasks = {
+                {
+                    What = "Mask/Paint",
+                    MaskActive = true,
+                    MaskName = "Face lift",
+                    MaskSyncID = "rewritten-mask",
+                    Dabs = { "d 0.200001 0.300000", "d 0.400000 0.500000" },
+                    Radius = 0.12,
+                    Feather = 0.35,
+                    Flow = 0.7,
+                    MaskValue = 0.8,
+                    CenterWeight = 0.65,
+                },
+            },
+            LocalExposure2012 = 0.5,
+            LocalClarity2012 = 12,
+        })
+        local catalog, _, _, _, Handler = setup({
+            copy = { developSettings = current },
+            pluginPresets = {
+                fakePreset(
+                    "Lightroom MCP Mask Checkpoint [" .. operationId .. "]",
+                    before,
+                    "checkpoint-rewritten-payload-mismatch"
+                ),
+            },
+        })
+
+        local result = Handler.createMask(brushArgs({ operation_id = operationId }))
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_true(result.reason:find(
+            "payload=Dabs expected=[d 0.200000 0.300000|d 0.400000 0.500000] actual=[d 0.200001 0.300000|d 0.400000 0.500000]",
+            1,
+            true
+        ) ~= nil)
+        assert.is_true(result.reason:find(
+            "local_keys=[LocalClarity2012=12,LocalExposure2012=0.5]",
+            1,
+            true
+        ) ~= nil)
+        assert.is_true(result.reason:find("correction_keys=[", 1, true) ~= nil)
+        assert.is_true(result.reason:find("CorrectionSyncID=rewritten-correction", 1, true) ~= nil)
+        assert.is_true(result.reason:find("delta=true", 1, true) ~= nil)
+        assert.are.equal(0, catalog:getWriteAccessCount())
     end)
 
     it("reconciles a write that reports a timeout after Lightroom applied it", function()

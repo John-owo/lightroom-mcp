@@ -1565,3 +1565,300 @@ Unverified boundaries:
   folded into that commit by staging only `WORKLOG.md` and using
   `git commit --amend --no-edit`; no source or configured-checkout file is
   changed by the amendment.
+
+## 2026-09-01 - Independent T62 validation follow-up
+
+- Read the referenced Codex implementation task before relying on its report,
+  then independently fixed the review range to `c29eaa8..65443cc`. The current
+  branch is `codex/t62-mask-creation`, the isolated worktree was clean before
+  this validation-log update, and the commit contains 13 files / 2474
+  insertions / 11 deletions.
+- The code-review skill's optional `docs/agents/issue-tracker.md` was absent.
+  Review therefore used the repository `CLAUDE.md` and the three supplied
+  T62/T63 mask handoffs/specification as the authoritative standards and spec.
+- Independent server verification passed: targeted mask/dispatch/server tests
+  reported 3 suites / 83 tests, `npm.cmd run check`, `npm.cmd run lint`, and
+  `npm.cmd run build` all passed, and the complete server suite reported 16
+  suites / 179 tests.
+- Independent Lua verification used the already-prepared Lua 5.4.6 fallback
+  runner because the official Busted runtime remains unavailable. Targeted
+  `HandlerMask_spec.lua` reported 10 PASS / 0 FAIL; the 14-file plugin sweep
+  reported 165 PASS / 0 FAIL; `luac.exe -p` parsed all 35 Lua files; Selene
+  0.31.0 reported 0 errors, 0 warnings, and 0 parse errors.
+- Standards review found no hard repository-standard violation. It recorded one
+  maintainability judgment call: selection/identity helpers in
+  `HandlerMask.lua:17-161` duplicate the corresponding
+  `HandlerVirtualCopy.lua:17-185` implementation, and selection-status shaping
+  is repeated within `HandlerMask.lua`. This does not invalidate T62 behavior,
+  but a shared module would reduce drift risk.
+- Spec review identified an unverified claim boundary: the Lightroom readback
+  proves the mask-tree and global-Develop preservation fields, but
+  `MaskAdapter.lua:591-592` returns `source_untouched=true` and
+  `sidecar_untouched=true` without filesystem observation. Live acceptance must
+  use independent source hash/timestamp and sidecar-state evidence; the runtime
+  booleans alone are not accepted as that evidence.
+- A first targeted `rg` used the wrong server path
+  `server/src/mcp/tool-contracts.ts` and failed with path-not-found; the corrected
+  path is `server/src/tool-contracts.ts`. A later PowerShell `rg` call passed a
+  wildcard as a literal Windows path and emitted error 123; explicit file paths
+  were used afterward. An earlier compound regex also failed with an unclosed
+  group; literal searches replaced it. None of these read-only failures changed
+  source or Lightroom state.
+- Direct Computer Use initialization failed twice before any UI input with
+  `Importing module "node:process" is not allowed in node_repl`; therefore no
+  Lightroom click, keystroke, plug-in reload, or application restart occurred.
+- Read-only Lightroom preference and file-hash inspection proved the running
+  plug-in registration still points to
+  `D:\photo\_agent_workspace\git-worktrees\lightroom-mcp-roadmap-integration\plugin\LightroomMCP.lrplugin`.
+  That plug-in and the disabled installed copy do not contain `HandlerMask.lua`;
+  only the isolated T62 plug-in contains it. The first PowerShell hash-comparison
+  command had an empty-pipe parser error; the corrected command succeeded.
+- Consequently the live MCP Brush round-trip has not started: calling now would
+  exercise the old plug-in and would be invalid evidence. No plug-in path,
+  Lightroom preference, configured checkout, catalog, source photo, sidecar,
+  checkpoint, mask, render, Git ref, PR, or issue was changed during this
+  follow-up.
+
+## 2026-09-01 - T62 live first-Brush validation and fail-closed repair
+
+- Used exact Windows UI Automation control names and native window discovery to
+  replace the active roadmap-integration Lightroom plug-in with this worktree's
+  `plugin\LightroomMCP.lrplugin`, then started its socket server. Direct Codex
+  Computer Use remained unavailable because initialization failed before UI
+  input with `Importing module "node:process" is not allowed in node_repl`.
+  The fallback did not use blind coordinates: the Plug-in Manager path, plug-in
+  identity, `增加`, `移除`, `重新載入增效模組`, `Start Server`, and `完成`
+  controls were read before the scoped actions.
+- Stopped only the old Lightroom MCP Node process after its exact command line
+  proved it was the roadmap-integration server. The T62 runner then advertised
+  `create_mask` through the live MCP transport. No unrelated Node or MCP process
+  was changed.
+- Fixed the first-mask capability gate with a test-first, fail-closed schema
+  classifier. Lightroom 15.5.1 / ProcessVersion 15.4 was observed to expose
+  `EnableMaskGroupBasedCorrections=true` while omitting
+  `MaskGroupBasedCorrections` before the first mask. That exact pair is now the
+  only allowed unmaterialized-empty state; missing-both, partial, disabled,
+  malformed, or other runtime/process combinations still refuse mutation.
+  Added first-mask creation, same-operation reconciliation,
+  timeout-after-apply, and rejection-matrix regressions. Targeted fallback Lua
+  verification passed 14 visible PASS / 0 FAIL after the classifier and retry
+  diagnostic changes.
+- Live identity and source boundary for the test was fixed to Workflow Copy
+  catalog id `1012348`, UUID `B36C05B4-FECC-4D09-8E9A-59DAFD772345`, copy name
+  `Lightroom MCP VC [t09-5349-mask-validation-20260831-v1]`, and Master catalog
+  id `976316`, UUID `CE78E689-61FE-490E-B1B2-4D29A1D510E4`. The source is
+  `E:\Lr\2026\2026-07-25\DSC_5349.NEF`, 19,045,888 bytes, SHA-256
+  `0DD6DAF48F5D3683A847F79C0D59226F600913D93BF6398008CF21BD1AD34A82`,
+  CreationTimeUtc `2026-07-26T07:04:23.6991421Z`, LastWriteTimeUtc
+  `2026-07-25T07:57:08.2300000Z`, with zero adjacent XMP files. The Master
+  baseline was Exposure/Contrast/Highlights/Shadows/Vibrance all 0 and WB
+  As Shot 4850/31; the Workflow Copy baseline was 0.5/15/-20/20/10 and the
+  same WB.
+- Exported the pre-mask Workflow Copy render to
+  `D:\photo\_agent_workspace\lightroom\verification\t62-brush-mask-live-20260901-dsc5349-v1\before-mask\DSC_5349.jpg`;
+  it is 2,002,289 bytes and 2048x1365. The after-mask directory was created but
+  remains empty pending the idempotency repair and final readback.
+- A real Brush mutation succeeded through the T62 MCP contract with operation
+  id `t62-live-brush-dsc5349-20260901-v1`, name `T62 Live Brush DSC 5349`, six
+  normalized points, size 0.1, feather 0.75, flow 0.8, density 0.9, and local
+  Exposure +0.35, Shadows +20, Temperature +5, Texture +10. Lightroom read back
+  `result=created`, mask id `97f38f18-d916-8360-4d81-00007cba6318`, correction
+  id `bc718038-f401-7cb0-26eb-00005feeb7ac`, checkpoint UUID
+  `6BC5C6F3-E3DA-4336-A1CC-86BE5CEFD452`, exact geometry/settings, verified
+  selection restoration, one-mask addition, unchanged prior tree, and unchanged
+  global Develop settings. Subject and Sky were independently refused as
+  `unsupported` before checkpoint/write, as specified.
+- Repeating the exact operation id correctly avoided a duplicate, but returned
+  `REVIEW_REQUIRED` because the reused checkpoint did not reconcile with the
+  post-restart Workflow Copy state. The handler now preserves the adapter's
+  exact reconciliation error in that refusal so the next safe retry can isolate
+  Lightroom's readback normalization instead of returning the former generic
+  reason. This retry fix is not yet live-loaded.
+- A normal Lightroom Ctrl+Q produced the expected quit path but the process then
+  lost every UIA and Win32 top-level window without exiting. PID `224616`
+  remained responding with no main-window title and no ports 58763/58764, while
+  holding the active catalog
+  `D:\photo\_agent_workspace\lightroom\catalog-recovery\20260828-2216-backup-open-test\Lightroom Catalog-v13-5.lrcat`
+  plus its lock/WAL/SHM. Starting Lightroom again returned a transient PID and
+  handed off to the same no-window process. A non-elevated, non-`/F` `taskkill`
+  attempt failed `Access denied`; the escalated request was rejected because
+  ending a catalog-owning process requires explicit user approval. No force
+  termination, lock deletion, catalog overwrite, or workaround was attempted.
+- Current live boundary: the one verified Brush and checkpoint remain in the
+  catalog, but same-operation `reconciled` proof, after render, final source/XMP
+  re-hash, Master/Workflow Copy metadata readback, and human visual confirmation
+  remain pending until Lightroom can be restarted safely. Full automated
+  regression and documentation review continue independently; no push, PR, or
+  issue mutation is authorized or performed.
+
+## 2026-09-01 - T62 final automated regression (delegated)
+
+- Server targeted mask regression: `npm.cmd test -- --runInBand
+  server/tests/mask-adapter.test.ts server/tests/create-mask-handler.test.ts
+  server/tests/list-tools-handler.test.ts` passed 1 suite / 69 tests.
+- Server full regression: `npm.cmd test -- --runInBand` passed 16 suites /
+  179 tests. `npm.cmd run check`, `npm.cmd run lint`, and `npm.cmd run build`
+  all passed.
+- Prepared Lua 5.4.6 fallback runner (official Busted remains unavailable in
+  this runtime): `HandlerMask_spec.lua` passed 18/18; all 14 plugin spec files
+  passed 173/173 in separate processes.
+- `luac.exe -p` parsed all 35 plugin and spec Lua files successfully.
+- Selene 0.31.0 over `plugin/LightroomMCP.lrplugin` returned 0 errors, 1
+  warning, and 0 parse errors: unused local function `maskMatches` at
+  `MaskAdapter.lua:588`.
+- `git diff --check` exited 0; Git emitted only the known LF-to-CRLF working
+  copy normalization warnings.
+
+## 2026-09-01 - T62 live restart reconciliation and clean single-Brush render
+
+- After explicit user authorization, force-terminated only the stuck Lightroom
+  PID `224616`. The process had already been bounded to the original recovery
+  catalog and had no UI/listeners while retaining lock/WAL/SHM. No lock file was
+  deleted and the original catalog was not overwritten. Preserved the original,
+  made `catalog-recovery-copy-v1`, then made `catalog-recovery-copy-v2` after a
+  v1 process exited abnormally; catalog/WAL/SHM hashes matched at the copy
+  boundary. All later mutation and restart testing used v2 under
+  `D:\photo\_agent_workspace\lightroom\verification\t62-brush-mask-live-20260901-dsc5349-v1`.
+- Live restart inspection of the first diagnostic Brush proved Lightroom
+  15.5.1 / ProcessVersion 15.4 rewrites both SyncIDs and prepends
+  `f 0.8000` to the persisted Dabs. It also retained only
+  `LocalExposure2012=0.35`; requested Shadows, Temperature, and Texture had no
+  persisted local keys. Added fail-closed runtime gating so that exact version
+  pair accepts only local Exposure and returns `unsupported` before checkpoint
+  or mutation for the unverified settings.
+- Restored the original diagnostic checkpoint and confirmed its global
+  Exposure/Contrast/Highlights/Shadows/Vibrance baseline, but later readback
+  proved applying the checkpoint did not remove the prior mask tree. The first
+  diagnostic Copy and its two masks were preserved for analysis; its render is
+  explicitly excluded from final single-mask visual evidence.
+- Added unique rewritten-ID reconciliation. It requires exactly one candidate
+  whose removal reproduces the complete checkpoint mask tree and whose name,
+  Brush payload, and requested local settings all match. Name alone is never
+  accepted. Bounded diagnostics report candidate IDs, payload/local mismatch,
+  correction keys, mask keys, and checkpoint delta without mutating state.
+- Added strict Dabs normalization: immediate `d` tokens are accepted, or one
+  leading `f <flow>` token numerically equal to the request followed by the
+  exact requested points. Unknown tokens, wrong flow, or changed points remain
+  fail-closed.
+- The exposure-only diagnostic operation
+  `t62-live-brush-dsc5349-exposure-only-20260901-v2` was created with checkpoint
+  `302AA80E-044F-4FEB-B293-4D519EFB91BD`. After a full normal Lightroom quit
+  and reopen it initially returned `REVIEW_REQUIRED`, with the unique candidate
+  showing `Feather` omitted but `CenterWeight=0.25`, Radius `0.1`, Flow `0.8`,
+  MaskValue `0.9`, and exact Dabs/local Exposure. Added a red regression, then
+  reconstructed Feather only from finite `1 - CenterWeight` when the explicit
+  Feather key is absent. The targeted HandlerMask suite passed 19/19 after the
+  fix; the same live operation then returned `reconciled` with persisted mask
+  `990B33E8A725384DA13FD08FB3954F3E`, correction
+  `4C1C49F6DEF83F4B83C8B7ECB12CC330`, 6 points, exact
+  `0.1/0.75/0.8/0.9`, Exposure `0.35`, and all preservation flags true.
+- To eliminate visual contamination from the diagnostic Copy, created a fresh
+  Workflow Copy from Master `976316` with operation
+  `t62-clean-render-copy-20260901-v3`: catalog id `1012398`, UUID
+  `C2C58166-A1A6-4B3F-BF26-2EB969FC2D81`. Exported its clean baseline, then
+  created exactly one Brush using operation
+  `t62-clean-brush-dsc5349-exposure-only-20260901-v3`, checkpoint
+  `E1FBBC9C-27CF-476D-8EA0-BB0083353D80`, 6 requested points,
+  size/feather/flow/density `0.1/0.75/0.8/0.9`, and local Exposure `0.35`.
+  Initial result was `created`; selection restoration was verified and all
+  mask-tree/global preservation fields were true.
+- Exported the clean after render, normally quit Lightroom PID `8356`, verified
+  the catalog copy had no lock/WAL/SHM, reopened it as PID `247636`, waited for
+  both 58763/58764 listeners, and repeated the exact v3 operation. It returned
+  `reconciled`, not `created`, with Lightroom-persisted mask
+  `F6D35598BE39984A85DE1574433690E6`, correction
+  `969770E41B770B4CA637932C1816FE54`, the same checkpoint, exact geometry and
+  local Exposure, no selection action needed, and every preservation flag true.
+- Clean render evidence: before is 1,825,434 bytes, SHA-256
+  `05C60C4770C284A64BB93CCCC2E4A446AC182DBC8F283257840EFB09712E34D5`;
+  after is 1,840,325 bytes, SHA-256
+  `0A66883FD7593D29A2184D867FAF937B5DA343A45C1ACE7F28C64DAD023D2ED0`.
+  Both are 2048x1365 24-bit RGB JPEG, 240 dpi, with a 3144-byte ICC profile and
+  ColorSpace tag 1. Hashes differ. Agent image inspection is technical only;
+  the user-owned visual PASS remains pending.
+- Final metadata readback showed both clean Copy `1012398` and Master `976316`
+  at global Exposure/Contrast/Highlights/Shadows/Vibrance `0/0/0/0/0` and WB
+  `As Shot/4850/31`. Final external source readback again found
+  `E:\Lr\2026\2026-07-25\DSC_5349.NEF` at 19,045,888 bytes, CreationTimeUtc
+  `2026-07-26T07:04:23.6991421Z`, LastWriteTimeUtc
+  `2026-07-25T07:57:08.2300000Z`, SHA-256
+  `0DD6DAF48F5D3683A847F79C0D59226F600913D93BF6398008CF21BD1AD34A82`,
+  and zero adjacent XMP files. Runtime `source_untouched` booleans were not used
+  as this evidence.
+- Re-ran live Subject and Sky on the current plug-in. Both returned
+  `unsupported` with reason `AI Subject/Sky creation and payload readback
+  adapter is not enabled`, no checkpoint UUID, and verified `not_needed`
+  selection restoration.
+- Operational failures recorded for reproducibility: a sandboxed runner failed
+  `EPERM` creating `C:\Users\John\.config\lightroom-mcp`; the escalated retry
+  found old roadmap-integration bridge PID `199416`, whose exact command line
+  was verified before stopping only that child. The first SendKeys quit attempt
+  did not find the confirmation; exact WM_CLOSE plus the unique `是` UIA button
+  completed every later normal quit. One launch used the wrong catalog-copy
+  parent and failed before mutation. Three PowerShell `foreach (...) { ... } |
+  Format-*` forms produced the known empty-pipe parser error; assigning the loop
+  output to a variable fixed them. No such failure changed photo files, masks,
+  catalog identity, or Git refs.
+- Updated root/server documentation and the verification README to distinguish
+  automated/live/human gates, document exact runtime normalization and
+  exposure-only persistence, and point final visual review to `clean-v3`.
+
+## 2026-09-01 - T62 rewritten-identity safety review fixes
+
+- Independent delegated review found two P2 fail-closed gaps after the first
+  clean-v3 pass. Rewritten-ID candidates verified name, geometry, requested
+  local settings, and unique checkpoint delta, but did not yet require
+  `CorrectionActive=true`, `CorrectionAmount=1`, `MaskActive=true`, neutral
+  inversion/blend state, or absence of unrequested semantic local adjustments.
+  It also found that explicit malformed Feather could fall back to
+  CenterWeight, and that fallback was not limited to the live-verified runtime.
+- Added red regressions. The targeted HandlerMask run produced three expected
+  failing cases before the implementation change: positive version-scoped
+  fallback, malformed/unverified-runtime refusal, and disabled/semantically
+  changed payload refusal. The fake positive fixture was then aligned to the
+  exact 15.5.1 / ProcessVersion 15.4 exposure-only runtime boundary.
+- Reconciliation now requires the correction and mask to be active, correction
+  amount `1`, optional persisted inversion `false`, optional blend mode `0`,
+  exact requested local values, no nonzero unrequested allowlisted local
+  adjustments, and no unknown `Local*` keys except the live-observed implicit
+  default `LocalCurveRefineSaturation=100`. The unique complete checkpoint
+  delta, exact name, exact geometry, and Dabs rules remain required.
+- Feather normalization now treats a present non-finite/non-number value as a
+  mismatch. CenterWeight fallback is allowed only when Feather is absent and
+  both the Lightroom runtime and before/current ProcessVersion are exactly
+  `15.5.1 / 15.4`. Explicit wrong Feather, missing Feather on any other
+  runtime, wrong CenterWeight, and malformed Dabs remain fail-closed.
+- After the fix, targeted HandlerMask passed 21/21 and Selene reported
+  0 errors, 0 warnings, 0 parse errors. Normally quit clean-v3 Lightroom PID
+  `247636`, verified no catalog lock/WAL/SHM, reopened as PID `221000`, and
+  repeated the exact v3 operation. The stricter live code still returned
+  `reconciled` with the same persisted IDs, checkpoint, 6 points, reconstructed
+  Feather `0.75`, Exposure `0.35`, verified selection, and all preservation
+  flags true. No new mask or checkpoint was created.
+- The delegated re-review found no remaining P1/P2. It identified one P3 test
+  weakness: the non-unique rewrite fixture was being rejected by the new
+  semantic checks before reaching ambiguity. Rebuilt that fixture so the
+  checkpoint contains one complete candidate and current readback contains two
+  structurally identical complete candidates. Removing either reproduces the
+  checkpoint, so both enter the rewritten candidate set and the
+  `#rewrittenCandidates == 1` gate is exercised directly. The test still
+  returns `REVIEW_REQUIRED` and its bounded identity list contains the duplicate
+  persisted ID twice.
+- Final delegated regression after the implementation safety fixes passed:
+  server targeted mask 1 suite / 69 tests, server full 16 suites / 179 tests,
+  `npm.cmd run check`, `npm.cmd run lint`, and `npm.cmd run build`; HandlerMask
+  21/21, all 14 Lua spec files 176/176, `luac -p` 35 files / 0 failures,
+  Selene 0 errors / 0 warnings / 0 parse errors, and `git diff --check` exit 0
+  with only the known LF/CRLF normalization warnings. After the P3 test-only
+  fixture correction, HandlerMask remained 21/21, all Lua specs 176/176,
+  `luac -p` remained 35/35, Selene remained clean, and `git diff --check`
+  remained clean.
+- Final staging was restricted to `README.md`, `README.en.md`, `WORKLOG.md`,
+  `HandlerMask.lua`, `MaskAdapter.lua`, `HandlerMask_spec.lua`, and
+  `server/README.md`. Both unstaged and staged `git diff --check` passed with
+  only the known LF/CRLF normalization warnings; `git diff --cached
+  --name-status` listed exactly those seven modified files. Local commit command
+  `git commit -m "fix: verify live mask persistence"` succeeded as `b9b284e`;
+  this worklog-only post-commit record is amended into that same local commit,
+  so the final commit hash reported in the handoff supersedes `b9b284e`. No
+  push, PR, issue, or configured-checkout mutation was performed.

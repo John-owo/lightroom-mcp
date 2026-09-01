@@ -1,4 +1,6 @@
 local LrApplication = import 'LrApplication'
+local LrApplicationView = import 'LrApplicationView'
+local LrDevelopController = import 'LrDevelopController'
 local LrTasks = import 'LrTasks'
 
 local PhotoLookup = require 'PhotoLookup'
@@ -183,8 +185,14 @@ local function presetMethod(preset, methodName)
     return value
 end
 
-local function checkpointName(operationId)
+local function legacyCheckpointName(operationId)
     return "Lightroom MCP Mask Checkpoint [" .. operationId .. "]"
+end
+
+local function checkpointName(operationId, requestFingerprint)
+    local legacy = legacyCheckpointName(operationId)
+    if requestFingerprint == nil then return legacy end
+    return legacy .. " [request:" .. requestFingerprint .. "]"
 end
 
 local function namedPresets(presets, name)
@@ -210,12 +218,42 @@ local function pluginPresets()
     return presets
 end
 
-local function checkpointFor(beforeSettings, operationId, operationIdentityPresent)
-    local name = checkpointName(operationId)
+local function checkpointFor(
+    beforeSettings,
+    operationId,
+    operationIdentityPresent,
+    requestFingerprint
+)
+    local legacyName = legacyCheckpointName(operationId)
+    local name = checkpointName(operationId, requestFingerprint)
     local presets, listError = pluginPresets()
     if not presets then return nil, nil, listError end
 
     local matches = namedPresets(presets, name)
+    local legacyMatches = requestFingerprint ~= nil
+        and namedPresets(presets, legacyName)
+        or {}
+    local fingerprintConflicts = {}
+    local prefix = legacyName .. " [request:"
+    for _, candidate in ipairs(presets) do
+        local candidateName = presetMethod(candidate, "getName")
+        if type(candidateName) == "string"
+            and candidateName:sub(1, #prefix) == prefix
+            and (requestFingerprint == nil or candidateName ~= name) then
+            table.insert(fingerprintConflicts, candidate)
+        end
+    end
+    if #fingerprintConflicts > 0 then
+        return nil, nil, "Checkpoint operation id is already request-bound; refusing cross-kind or changed-request reuse"
+    end
+    if #matches > 0 and #legacyMatches > 0 then
+        return nil, nil, "Legacy and request-bound checkpoints both exist; refusing ambiguous recovery"
+    end
+    if #matches == 0 and #legacyMatches == 1 then
+        matches = legacyMatches
+    elseif #legacyMatches > 1 then
+        return nil, nil, "Legacy checkpoint name is ambiguous; refusing to guess"
+    end
     if #matches > 1 then
         return nil, nil, "Checkpoint name is ambiguous; refusing to overwrite or create"
     end
@@ -278,12 +316,14 @@ local function checkpointFor(beforeSettings, operationId, operationIdentityPrese
     end
 
     local checkpoint = {
-        name = name,
+        name = presetMethod(preset, "getName") or name,
         uuid = uuid,
         scope = "plugin",
         recovery_evidence = true,
         true_undo = false,
         _reused = reused,
+        _request_fingerprint_verified = requestFingerprint == nil
+            or presetMethod(preset, "getName") == name,
     }
     return checkpoint, settings
 end
@@ -426,6 +466,351 @@ local function tryReconcile(catalog, photo, beforeSettings, args, ids, lightroom
     return readback
 end
 
+local function currentModuleName()
+    if type(LrApplicationView.getCurrentModuleName) ~= "function" then
+        return nil, "Current Lightroom module API is unavailable"
+    end
+    local ok, value = protected(function()
+        return LrApplicationView.getCurrentModuleName()
+    end)
+    if not ok or type(value) ~= "string" or value == "" then
+        return nil, "Current Lightroom module could not be read: " .. tostring(value)
+    end
+    return value
+end
+
+local function waitForModule(expected)
+    local lastError
+    for attempt = 1, 20 do
+        local current, readError = currentModuleName()
+        if current == expected then return true end
+        lastError = readError or ("actual=" .. tostring(current))
+        if attempt < 20 and type(LrTasks.sleep) == "function" then LrTasks.sleep(0.1) end
+    end
+    return false, "Lightroom module switch readback mismatch (expected="
+        .. tostring(expected) .. ", " .. tostring(lastError) .. ")"
+end
+
+local function switchModule(name)
+    if type(LrApplicationView.switchToModule) ~= "function" then
+        return false, "Lightroom module switch API is unavailable"
+    end
+    local ok, err = protected(function() LrApplicationView.switchToModule(name) end)
+    if not ok then return false, err end
+    return waitForModule(name)
+end
+
+local function readSubjectDeltaBounded(
+    catalog,
+    photo,
+    beforeSettings,
+    lightroomVersion
+)
+    local lastError
+    for attempt = 1, 40 do
+        local readOk, currentOrError = protected(function()
+            return readDevelopSettings(catalog, photo)
+        end)
+        if readOk then
+            local candidate, candidateError = MaskAdapter.findSubjectDelta(
+                beforeSettings,
+                currentOrError,
+                lightroomVersion
+            )
+            if candidate then return currentOrError end
+            lastError = candidateError
+        else
+            lastError = currentOrError
+        end
+        if attempt < 40 and type(LrTasks.sleep) == "function" then LrTasks.sleep(0.25) end
+    end
+    return nil, "Subject mask readback did not produce one exact checkpoint delta: "
+        .. tostring(lastError)
+end
+
+
+local function completeSubjectDelta(
+    catalog,
+    photo,
+    beforeSettings,
+    args,
+    lightroomVersion
+)
+    local current, deltaError = readSubjectDeltaBounded(
+        catalog,
+        photo,
+        beforeSettings,
+        lightroomVersion
+    )
+    if not current then return nil, deltaError end
+
+    local alreadyComplete, reconcileError = MaskAdapter.reconcileSubject(
+        beforeSettings,
+        current,
+        args,
+        lightroomVersion
+    )
+    if alreadyComplete then return alreadyComplete end
+
+    local patched, patchError = MaskAdapter.patchSubjectCorrection(
+        beforeSettings,
+        current,
+        args,
+        lightroomVersion
+    )
+    if not patched then return nil, patchError or reconcileError end
+    catalog:withWriteAccessDo("Apply Lightroom Subject Mask Settings", function()
+        photo:applyDevelopSettings(patched)
+    end)
+
+    local finalSettings = readDevelopSettings(catalog, photo)
+    local readback, finalError = MaskAdapter.reconcileSubject(
+        beforeSettings,
+        finalSettings,
+        args,
+        lightroomVersion
+    )
+    if not readback then return nil, finalError end
+    local opaquePreserved, opaqueError = MaskAdapter.subjectOpaquePayloadPreserved(
+        beforeSettings,
+        current,
+        finalSettings,
+        lightroomVersion
+    )
+    if not opaquePreserved then return nil, opaqueError end
+    return readback
+end
+
+local function createSubjectMask(args, catalog, photo, context, capability)
+    local requestFingerprint = MaskAdapter.requestFingerprint(args)
+    local checkpoint, checkpointSettings, checkpointError = checkpointFor(
+        context.settings,
+        args.operation_id,
+        false,
+        requestFingerprint
+    )
+    if not checkpoint then
+        return reviewResult(
+            args.operation_id,
+            context,
+            capability,
+            nil,
+            selectionStatus("not_attempted", false),
+            checkpointError
+        )
+    end
+
+    local beforeSettings = context.settings
+    if checkpoint._reused then
+        beforeSettings = checkpointSettings
+        local priorReadback, priorError = MaskAdapter.reconcileSubject(
+            beforeSettings,
+            context.settings,
+            args,
+            capability.lightroom_version
+        )
+        if priorReadback then
+            return successResult(
+                args.operation_id,
+                "reconciled",
+                context,
+                capability,
+                checkpoint,
+                selectionStatus("not_needed", true),
+                priorReadback
+            )
+        end
+        if not checkpoint._request_fingerprint_verified then
+            return reviewResult(
+                args.operation_id,
+                context,
+                capability,
+                checkpoint,
+                selectionStatus("not_attempted", false),
+                "Legacy Subject checkpoint has no request fingerprint; "
+                    .. "refusing to patch an incomplete delta"
+            )
+        end
+        -- A prior response can be lost after Lightroom generated the one
+        -- Subject but before its name/local settings patch completed. Finish
+        -- only that exact checkpoint delta; never call createNewMask again.
+        local completionOk, completedOrError = protected(function()
+            local value, err = completeSubjectDelta(
+                catalog,
+                photo,
+                beforeSettings,
+                args,
+                capability.lightroom_version
+            )
+            if not value then error(err, 0) end
+            return value
+        end)
+        if completionOk then
+            return successResult(
+                args.operation_id,
+                "reconciled",
+                context,
+                capability,
+                checkpoint,
+                selectionStatus("not_needed", true),
+                completedOrError
+            )
+        end
+        local stateReason = MaskAdapter.deepEqual(beforeSettings, context.settings)
+            and "Existing Subject checkpoint has no exact delta yet; the AI controller will not be re-invoked"
+            or "Existing checkpoint does not match the current Workflow Copy state"
+        return reviewResult(
+            args.operation_id,
+            context,
+            capability,
+            checkpoint,
+            selectionStatus("not_attempted", false),
+            stateReason .. "; Subject reconciliation failed: " .. tostring(priorError)
+                .. "; exact-delta completion failed: " .. tostring(completedOrError)
+        )
+    end
+
+    local snapshot = readSelection(catalog)
+    if snapshot.targetPhoto == nil then
+        return reviewResult(
+            args.operation_id,
+            context,
+            capability,
+            checkpoint,
+            selectionStatus("not_attempted", false),
+            "Cannot create a Subject mask without a restorable active Lightroom selection"
+        )
+    end
+    local originalModule, moduleReadError = currentModuleName()
+    if not originalModule then
+        return reviewResult(
+            args.operation_id,
+            context,
+            capability,
+            checkpoint,
+            selectionStatus("not_attempted", false),
+            moduleReadError
+        )
+    end
+
+    local mutationStarted = false
+    local operationOk, operationResult = protected(function()
+        catalog:setSelectedPhotos(photo, {})
+        if not expectedSelectionMatches(catalog, photo) then
+            error("Selection changed before Subject mask creation", 0)
+        end
+        if originalModule ~= "develop" then
+            local switched, switchError = switchModule("develop")
+            if not switched then error(switchError, 0) end
+        end
+        local liveBeforeSettings = readDevelopSettings(catalog, photo)
+        if not MaskAdapter.deepEqual(liveBeforeSettings, context.settings) then
+            error("Develop settings changed before Subject mask creation", 0)
+        end
+
+        mutationStarted = true
+        LrDevelopController.createNewMask("aiSelection", "subject")
+        local readback, completionError = completeSubjectDelta(
+            catalog,
+            photo,
+            liveBeforeSettings,
+            args,
+            capability.lightroom_version
+        )
+        if not readback then error(completionError, 0) end
+        return readback
+    end)
+
+    local moduleRestoreOk = true
+    local moduleRestoreError
+    local currentModule, currentModuleError = currentModuleName()
+    if not currentModule then
+        moduleRestoreOk = false
+        moduleRestoreError = currentModuleError
+    elseif currentModule ~= originalModule then
+        moduleRestoreOk, moduleRestoreError = switchModule(originalModule)
+    end
+    local restoreOk, restoreError = restoreSelection(catalog, snapshot)
+    local finalModule, finalModuleError = currentModuleName()
+    if finalModule ~= originalModule then
+        moduleRestoreOk = false
+        moduleRestoreError = moduleRestoreError or finalModuleError
+            or ("Final module readback mismatch: " .. tostring(finalModule))
+    end
+    local finalSelectionOk = restoreOk and selectionMatches(catalog, snapshot)
+    if restoreOk and not finalSelectionOk then
+        restoreOk = false
+        restoreError = "Selection changed after restoring the original module"
+    end
+    local restoration = restoreOk and moduleRestoreOk and finalSelectionOk
+        and selectionStatus("restored", true)
+        or selectionStatus("failed", false, restoreError or moduleRestoreError)
+
+    if not operationOk and mutationStarted then
+        -- createNewMask can time out after Lightroom has committed the AI
+        -- mask. Never call it again: recover only from one exact checkpoint
+        -- delta, patch that correction once, and prove the final readback.
+        local recoveryOk, recoveredOrError = protected(function()
+            local value, err = completeSubjectDelta(
+                catalog,
+                photo,
+                beforeSettings,
+                args,
+                capability.lightroom_version
+            )
+            if not value then error(err, 0) end
+            return value
+        end)
+        if recoveryOk and restoreOk and moduleRestoreOk then
+            return successResult(
+                args.operation_id,
+                "reconciled",
+                context,
+                capability,
+                checkpoint,
+                restoration,
+                recoveredOrError
+            )
+        end
+        operationResult = tostring(operationResult)
+            .. "; exact-delta recovery: " .. tostring(recoveredOrError)
+    end
+
+    if not operationOk then
+        return reviewResult(
+            args.operation_id,
+            context,
+            capability,
+            checkpoint,
+            restoration,
+            "Subject creation requires review: " .. tostring(operationResult)
+                .. (moduleRestoreOk and "" or "; module restoration: "
+                    .. tostring(moduleRestoreError))
+        )
+    end
+    if not restoreOk or not moduleRestoreOk then
+        return reviewResult(
+            args.operation_id,
+            context,
+            capability,
+            checkpoint,
+            restoration,
+            "Subject was read back but Lightroom state restoration failed"
+                .. (moduleRestoreOk and "" or ": " .. tostring(moduleRestoreError)),
+            operationResult
+        )
+    end
+    return successResult(
+        args.operation_id,
+        "created",
+        context,
+        capability,
+        checkpoint,
+        restoration,
+        operationResult
+    )
+end
+
 function MaskHandler.createMask(args)
     MaskAdapter.validateArguments(args)
 
@@ -450,10 +835,13 @@ function MaskHandler.createMask(args)
         context.settings,
         runtimeVersion(),
         checkpointApiAvailable,
-        type(photo.applyDevelopSettings) == "function"
+        type(photo.applyDevelopSettings) == "function",
+        type(LrDevelopController.createNewMask) == "function"
+            and type(LrApplicationView.getCurrentModuleName) == "function"
+            and type(LrApplicationView.switchToModule) == "function"
     )
 
-    if args.mask_kind ~= "brush" then
+    if args.mask_kind == "sky" then
         return unsupportedResult(
             args.operation_id,
             capability,
@@ -461,11 +849,11 @@ function MaskHandler.createMask(args)
                 or "AI mask creation and readback adapter is not enabled"
         )
     end
-    if not capability.kinds.brush.supported then
+    if not capability.kinds[args.mask_kind].supported then
         return unsupportedResult(
             args.operation_id,
             capability,
-            capability.kinds.brush.reason or "Brush mask adapter is unavailable"
+            capability.kinds[args.mask_kind].reason or "Mask adapter is unavailable"
         )
     end
 
@@ -478,9 +866,13 @@ function MaskHandler.createMask(args)
         return unsupportedResult(
             args.operation_id,
             capability,
-            "Persistent Brush readback is not live-verified for local settings: "
+            "Persistent mask readback is not live-verified for local settings: "
                 .. table.concat(unverifiedLocalSettings, ", ")
         )
+    end
+
+    if args.mask_kind == "subject" then
+        return createSubjectMask(args, catalog, photo, context, capability)
     end
 
     local ids = MaskAdapter.identities(args)
@@ -491,7 +883,8 @@ function MaskHandler.createMask(args)
         operationIdentityPresent
     )
     if not checkpoint then
-        if operationIdentityPresent then
+        if operationIdentityPresent
+            or tostring(checkpointError):find("request%-bound") ~= nil then
             return reviewResult(
                 args.operation_id,
                 context,

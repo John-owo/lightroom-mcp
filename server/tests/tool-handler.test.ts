@@ -75,4 +75,35 @@ describe('createCallToolHandler', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toBe('raw string');
   });
+
+  it('returns bounded REVIEW_REQUIRED evidence for malformed typed output', async () => {
+    const handler = makeHandler({
+      call: async () => ({
+        id: '1',
+        result: {
+          operation_id: 'mask-op-001',
+          result: 'created',
+          mask_id: 42,
+          oversized: 'x'.repeat(20_000),
+        },
+      }),
+    });
+
+    const result = await handler('create_mask', { operation_id: 'mask-op-001' });
+    const evidence: unknown = JSON.parse(result.content[0].text);
+    const evidenceRecord = evidence as {
+      validation_failure: { raw_response_json: string; raw_response_truncated: boolean };
+    };
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toEqual(evidence);
+    expect(evidence).toMatchObject({
+      operation_id: 'mask-op-001',
+      result: 'REVIEW_REQUIRED',
+      capability: { lightroom_version: 'unverified' },
+      selection_restoration: { status: 'not_attempted', verified: false },
+      validation_failure: { raw_response_truncated: true },
+    });
+    expect(evidenceRecord.validation_failure.raw_response_json.length).toBe(16_384);
+  });
 });

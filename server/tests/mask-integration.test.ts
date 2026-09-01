@@ -34,6 +34,17 @@ async function waitFor(check: () => boolean, timeoutMs: number, label: string): 
   }
 }
 
+async function expectMalformedEvidence(resultPromise: Promise<unknown>): Promise<void> {
+  const result = (await resultPromise) as ToolResult;
+  expect(result.isError).toBeFalsy();
+  expect(result.structuredContent).toMatchObject({
+    operation_id: OPERATION_ID,
+    result: "REVIEW_REQUIRED",
+    validation_failure: { raw_response_truncated: false },
+  });
+  expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+}
+
 function identity(catalogId: string, uuid: string, isVirtualCopy: boolean) {
   return {
     catalog_id: catalogId,
@@ -119,8 +130,49 @@ function successResult() {
   };
 }
 
-async function startHarness(): Promise<Harness> {
-  const expectedArgs = {
+function subjectSuccessResult() {
+  return {
+    ...successResult(),
+    mask_id: "subject-mask-id-001",
+    correction_id: "subject-correction-id-001",
+    name: "Squirrel Subject",
+    mask_kind: "subject",
+    kind_parameters: {},
+    initial_local_settings: { exposure: 0.65 },
+    geometry: {
+      coordinate_system: "lightroom_ai",
+      coordinate_units: "opaque",
+      ai_payload_present: true,
+      ai_payload_field_count: 10,
+      ai_mask_type: "Mask/Image",
+      ai_mask_subtype: 1,
+      ai_error_state: "zero",
+      error_reason: 0,
+    },
+    capability: {
+      ...successResult().capability,
+      kinds: {
+        ...successResult().capability.kinds,
+        subject: {
+          supported: true,
+          accepted_parameters: [],
+          readback_guarantees: [
+            "Mask/Image",
+            "MaskSubType=1",
+            "ErrorReason absent-or-zero",
+            "opaque AI payload",
+          ],
+        },
+      },
+    },
+  };
+}
+
+async function startHarness(options?: {
+  expectedArgs?: Record<string, unknown>;
+  resultFactory?: () => Record<string, unknown>;
+}): Promise<Harness> {
+  const expectedArgs = options?.expectedArgs ?? {
     photo_id: "101",
     expected_photo_uuid: "uuid-copy",
     expected_master_uuid: "uuid-master",
@@ -147,7 +199,7 @@ async function startHarness(): Promise<Harness> {
     handler: (action, params) => {
       expect(action).toBe("create_mask");
       expect(params).toEqual(expectedArgs);
-      const result = successResult();
+      const result = options?.resultFactory?.() ?? successResult();
       return malformed ? { ...result, mask_id: 42 } : result;
     },
   });
@@ -226,12 +278,7 @@ describe("create_mask across MCP and plugin transports", () => {
       "kind_parameters",
       "local_settings",
     ]);
-    expect(tool?.outputSchema?.required).toEqual(expect.arrayContaining([
-      "operation_id",
-      "result",
-      "capability",
-      "selection_restoration",
-    ]));
+    expect(tool?.outputSchema?.required).toEqual(["operation_id", "result"]);
 
     const result = (await harness.client.callTool({
       name: "create_mask",
@@ -270,7 +317,7 @@ describe("create_mask across MCP and plugin transports", () => {
     expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
 
     harness.setMalformed(true);
-    await expect(harness.client.callTool({
+    const malformed = (await harness.client.callTool({
       name: "create_mask",
       arguments: {
         photo_id: "101",
@@ -290,6 +337,220 @@ describe("create_mask across MCP and plugin transports", () => {
         },
         local_settings: { exposure: 0.5, clarity: 12 },
       },
-    })).rejects.toThrow(/structured content does not match/i);
+    })) as ToolResult;
+    expect(malformed.isError).toBeFalsy();
+    expect(malformed.structuredContent).toMatchObject({
+      operation_id: OPERATION_ID,
+      result: "REVIEW_REQUIRED",
+      validation_failure: { raw_response_truncated: false },
+    });
+    expect(JSON.parse(malformed.content[0].text)).toEqual(malformed.structuredContent);
+    const validationFailure = malformed.structuredContent?.validation_failure as {
+      raw_response_json: string;
+    };
+    expect(JSON.parse(validationFailure.raw_response_json)).toMatchObject({
+      operation_id: OPERATION_ID,
+      result: "created",
+      mask_id: 42,
+    });
+  }, 20_000);
+
+  it("round-trips a typed Lightroom-generated Subject result", async () => {
+    const subjectArgs = {
+      photo_id: "101",
+      expected_photo_uuid: "uuid-copy",
+      expected_master_uuid: "uuid-master",
+      operation_id: OPERATION_ID,
+      mask_kind: "subject",
+      name: "Squirrel Subject",
+      kind_parameters: {},
+      local_settings: { exposure: 0.65 },
+    };
+    harness = await startHarness({
+      expectedArgs: subjectArgs,
+      resultFactory: subjectSuccessResult,
+    });
+
+    const result = (await harness.client.callTool({
+      name: "create_mask",
+      arguments: subjectArgs,
+    })) as ToolResult;
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({
+      result: "created",
+      mask_kind: "subject",
+      name: "Squirrel Subject",
+      kind_parameters: {},
+      initial_local_settings: { exposure: 0.65 },
+      geometry: {
+        coordinate_system: "lightroom_ai",
+        coordinate_units: "opaque",
+        ai_payload_present: true,
+        ai_mask_type: "Mask/Image",
+        ai_mask_subtype: 1,
+        ai_error_state: "zero",
+        error_reason: 0,
+      },
+      preservation: {
+        exactly_one_mask_added: true,
+        existing_mask_tree_unchanged: true,
+        global_develop_unchanged: true,
+      },
+    });
+    expect(JSON.parse(result.content[0].text)).toEqual(result.structuredContent);
+  }, 20_000);
+
+  it("rejects a successful Brush result paired with Subject geometry", async () => {
+    harness = await startHarness({
+      resultFactory: () => ({
+        ...successResult(),
+        geometry: subjectSuccessResult().geometry,
+      }),
+    });
+    await harness.client.listTools();
+
+    await expectMalformedEvidence(harness.client.callTool({
+      name: "create_mask",
+      arguments: {
+        photo_id: "101",
+        expected_photo_uuid: "uuid-copy",
+        expected_master_uuid: "uuid-master",
+        operation_id: OPERATION_ID,
+        mask_kind: "brush",
+        name: "Face lift",
+        kind_parameters: {
+          coordinate_system: "normalized_image",
+          coordinate_units: "unit_interval",
+          path: [{ x: 0.2, y: 0.3 }, { x: 0.4, y: 0.5 }],
+          size: 0.12,
+          feather: 0.35,
+          flow: 0.7,
+          density: 0.8,
+        },
+        local_settings: { exposure: 0.5, clarity: 12 },
+      },
+    }));
+  }, 20_000);
+
+  it("rejects a successful Subject result paired with Brush geometry", async () => {
+    const subjectArgs = {
+      photo_id: "101",
+      expected_photo_uuid: "uuid-copy",
+      expected_master_uuid: "uuid-master",
+      operation_id: OPERATION_ID,
+      mask_kind: "subject",
+      name: "Squirrel Subject",
+      kind_parameters: {},
+      local_settings: { exposure: 0.65 },
+    };
+    harness = await startHarness({
+      expectedArgs: subjectArgs,
+      resultFactory: () => ({
+        ...subjectSuccessResult(),
+        geometry: successResult().geometry,
+      }),
+    });
+    await harness.client.listTools();
+
+    await expectMalformedEvidence(harness.client.callTool({
+      name: "create_mask",
+      arguments: subjectArgs,
+    }));
+  }, 20_000);
+
+  it("rejects a successful Brush result paired with empty Subject parameters", async () => {
+    harness = await startHarness({
+      resultFactory: () => ({
+        ...successResult(),
+        kind_parameters: {},
+      }),
+    });
+    await harness.client.listTools();
+
+    await expectMalformedEvidence(harness.client.callTool({
+      name: "create_mask",
+      arguments: {
+        photo_id: "101",
+        expected_photo_uuid: "uuid-copy",
+        expected_master_uuid: "uuid-master",
+        operation_id: OPERATION_ID,
+        mask_kind: "brush",
+        name: "Face lift",
+        kind_parameters: {
+          coordinate_system: "normalized_image",
+          coordinate_units: "unit_interval",
+          path: [{ x: 0.2, y: 0.3 }, { x: 0.4, y: 0.5 }],
+          size: 0.12,
+          feather: 0.35,
+          flow: 0.7,
+          density: 0.8,
+        },
+        local_settings: { exposure: 0.5, clarity: 12 },
+      },
+    }));
+  }, 20_000);
+
+  it("rejects a successful Subject result paired with Brush parameters", async () => {
+    const subjectArgs = {
+      photo_id: "101",
+      expected_photo_uuid: "uuid-copy",
+      expected_master_uuid: "uuid-master",
+      operation_id: OPERATION_ID,
+      mask_kind: "subject",
+      name: "Squirrel Subject",
+      kind_parameters: {},
+      local_settings: { exposure: 0.65 },
+    };
+    harness = await startHarness({
+      expectedArgs: subjectArgs,
+      resultFactory: () => ({
+        ...subjectSuccessResult(),
+        kind_parameters: successResult().kind_parameters,
+      }),
+    });
+    await harness.client.listTools();
+
+    await expectMalformedEvidence(harness.client.callTool({
+      name: "create_mask",
+      arguments: subjectArgs,
+    }));
+  }, 20_000);
+
+  it("normalizes a success payload that also carries validation failure evidence", async () => {
+    harness = await startHarness({
+      resultFactory: () => ({
+        ...successResult(),
+        validation_failure: {
+          raw_response_json: "{}",
+          raw_response_truncated: false,
+          raw_response_sha256: "a".repeat(64),
+          validator_summary: "must never accompany success",
+        },
+      }),
+    });
+    await harness.client.listTools();
+
+    await expectMalformedEvidence(harness.client.callTool({
+      name: "create_mask",
+      arguments: {
+        photo_id: "101",
+        expected_photo_uuid: "uuid-copy",
+        expected_master_uuid: "uuid-master",
+        operation_id: OPERATION_ID,
+        mask_kind: "brush",
+        name: "Face lift",
+        kind_parameters: {
+          coordinate_system: "normalized_image",
+          coordinate_units: "unit_interval",
+          path: [{ x: 0.2, y: 0.3 }, { x: 0.4, y: 0.5 }],
+          size: 0.12,
+          feather: 0.35,
+          flow: 0.7,
+          density: 0.8,
+        },
+        local_settings: { exposure: 0.5, clarity: 12 },
+      },
+    }));
   }, 20_000);
 });

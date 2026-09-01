@@ -248,6 +248,47 @@ local function hash32(value, seed)
     return math.floor(hash)
 end
 
+local function canonicalScalar(value)
+    if type(value) == "number" then
+        return "n" .. string.format("%.17g", value)
+    end
+    local text = tostring(value)
+    return "s" .. tostring(#text) .. ":" .. text
+end
+
+local function canonicalMap(value)
+    local keys = {}
+    for key, _ in pairs(value or {}) do table.insert(keys, key) end
+    table.sort(keys)
+    local parts = {}
+    for _, key in ipairs(keys) do
+        table.insert(parts, canonicalScalar(key) .. "=" .. canonicalScalar(value[key]))
+    end
+    return table.concat(parts, ";")
+end
+
+-- Bind a persisted checkpoint to the complete request that is allowed to
+-- finish it. Lightroom's preset API exposes only the preset name and Develop
+-- snapshot, so the compact dual hash is embedded in that name. It is not a
+-- security primitive; it prevents accidental operation-id reuse from changing
+-- the name or local settings of an already generated Subject.
+function MaskAdapter.requestFingerprint(args)
+    local canonical = table.concat({
+        "mask-request-v1",
+        canonicalScalar(args.photo_id),
+        canonicalScalar(args.expected_photo_uuid),
+        canonicalScalar(args.expected_master_uuid),
+        canonicalScalar(args.operation_id),
+        canonicalScalar(args.mask_kind),
+        canonicalScalar(args.name),
+        canonicalMap(args.kind_parameters),
+        canonicalMap(args.local_settings),
+    }, "|")
+    local first = hash32(canonical, 2166136261)
+    local second = hash32(canonical .. "|request-b", 2246822519)
+    return string.format("%08x%08x", first, second)
+end
+
 local function deterministicId(operationId, kind)
     local value = operationId .. "|" .. kind
     local a = hash32(value, 2166136261)
@@ -404,7 +445,13 @@ local function majorVersion(version)
     return tonumber(version:match("^(%d+)"))
 end
 
-function MaskAdapter.capability(settings, lightroomVersion, checkpointAvailable, applyAvailable)
+function MaskAdapter.capability(
+    settings,
+    lightroomVersion,
+    checkpointAvailable,
+    applyAvailable,
+    subjectCreateAvailable
+)
     local state = schemaState(settings)
     local processVersion = MaskAdapter.processVersion(settings)
     local runtimeMajor = majorVersion(lightroomVersion)
@@ -435,7 +482,12 @@ function MaskAdapter.capability(settings, lightroomVersion, checkpointAvailable,
         reason = "Photo develop-settings write API is unavailable"
     end
     local brushReason = supported and nil or reason
-    local aiReason = "AI Subject/Sky creation and payload readback adapter is not enabled"
+    local subjectSupported = supported and subjectCreateAvailable == true
+    local subjectReason = reason
+    if supported and not subjectCreateAvailable then
+        subjectReason = "LrDevelopController Subject creation or Develop module API is unavailable"
+    end
+    local skyReason = "AI Sky creation and payload readback adapter is not enabled"
     return {
         lightroom_version = lightroomVersion,
         process_version = processVersion,
@@ -454,16 +506,19 @@ function MaskAdapter.capability(settings, lightroomVersion, checkpointAvailable,
                 reason = brushReason,
             },
             subject = {
-                supported = false,
+                supported = subjectSupported,
                 accepted_parameters = {},
-                readback_guarantees = {},
-                reason = aiReason,
+                readback_guarantees = subjectSupported and {
+                    "unique checkpoint delta", "Mask/Image", "MaskSubType=1",
+                    "ErrorReason absent-or-zero", "opaque AI payload preserved", "local settings",
+                } or {},
+                reason = subjectReason,
             },
             sky = {
                 supported = false,
                 accepted_parameters = {},
                 readback_guarantees = {},
-                reason = aiReason,
+                reason = skyReason,
             },
         },
     }
@@ -611,7 +666,7 @@ local IMPLICIT_LOCAL_DEFAULTS = {
     LocalCurveRefineSaturation = 100,
 }
 
-local function localSettingsMismatch(correction, settings)
+local function localSettingsMismatch(correction, settings, allowUnknownZero)
     if type(correction) ~= "table" then return "correction_type=" .. type(correction) end
     local expectedKeys = {}
     for name, expected in pairs(settings) do
@@ -641,7 +696,9 @@ local function localSettingsMismatch(correction, settings)
             end
             if not known then
                 local implicitDefault = IMPLICIT_LOCAL_DEFAULTS[key]
-                if implicitDefault == nil or not numbersEqual(value, implicitDefault) then
+                local verifiedZero = allowUnknownZero == true and numbersEqual(value, 0)
+                if not verifiedZero
+                    and (implicitDefault == nil or not numbersEqual(value, implicitDefault)) then
                     return key .. " is not a verified implicit default; actual=" .. boundedValue(value)
                 end
             end
@@ -654,7 +711,7 @@ local function localSettingsMatch(correction, settings)
     return localSettingsMismatch(correction, settings) == nil
 end
 
-local function correctionPayloadMismatch(correction, args)
+local function correctionPayloadMismatch(correction, args, allowUnknownZero)
     if type(correction) ~= "table" then return "correction_type=" .. type(correction) end
     if correction.What ~= "Correction" then
         return "What expected=Correction actual=" .. boundedValue(correction.What)
@@ -665,7 +722,7 @@ local function correctionPayloadMismatch(correction, args)
     if not numbersEqual(correction.CorrectionAmount, 1) then
         return "CorrectionAmount expected=1 actual=" .. boundedValue(correction.CorrectionAmount)
     end
-    return localSettingsMismatch(correction, args.local_settings)
+    return localSettingsMismatch(correction, args.local_settings, allowUnknownZero)
 end
 
 local function correctionPayloadMatches(correction, args)
@@ -815,6 +872,260 @@ local function identityDiagnostic(tree, ids)
         .. ", mask_id=" .. tostring(ids.mask_id)
         .. "; found correction_ids=[" .. table.concat(correctionIds, ",")
         .. "], mask_ids=[" .. table.concat(maskIds, ",") .. "]"
+end
+
+local AI_MASK_METADATA = {
+    What = true,
+    MaskActive = true,
+    MaskName = true,
+    MaskBlendMode = true,
+    MaskInverted = true,
+    MaskSyncID = true,
+    MaskValue = true,
+    MaskVersion = true,
+    MaskSubType = true,
+    ReferencePoint = true,
+    ErrorReason = true,
+}
+
+local function aiPayloadFieldCount(mask)
+    local count = 0
+    for key, _ in pairs(mask or {}) do
+        if not AI_MASK_METADATA[key] then count = count + 1 end
+    end
+    return count
+end
+
+local function subjectMaskMismatch(mask)
+    if type(mask) ~= "table" then return "mask_type=" .. type(mask) end
+    if mask.What ~= "Mask/Image" then
+        return "What expected=Mask/Image actual=" .. boundedValue(mask.What)
+    end
+    if mask.MaskSubType ~= 1 then
+        return "MaskSubType expected=1 actual=" .. boundedValue(mask.MaskSubType)
+    end
+    if mask.ErrorReason ~= nil and mask.ErrorReason ~= 0 then
+        return "ErrorReason expected absent-or-zero actual=" .. boundedValue(mask.ErrorReason)
+    end
+    if mask.MaskActive ~= true then
+        return "MaskActive expected=true actual=" .. boundedValue(mask.MaskActive)
+    end
+    if mask.MaskInverted ~= nil and mask.MaskInverted ~= false then
+        return "MaskInverted expected=false actual=" .. boundedValue(mask.MaskInverted)
+    end
+    if mask.MaskBlendMode ~= nil and not numbersEqual(mask.MaskBlendMode, 0) then
+        return "MaskBlendMode expected=0 actual=" .. boundedValue(mask.MaskBlendMode)
+    end
+    if type(mask.MaskSyncID) ~= "string" or mask.MaskSyncID == "" then
+        return "MaskSyncID is unavailable"
+    end
+    if aiPayloadFieldCount(mask) < 1 then
+        return "opaque AI payload is unavailable"
+    end
+    return nil
+end
+
+local function subjectCorrectionMismatch(correction)
+    if type(correction) ~= "table" then
+        return "correction_type=" .. type(correction)
+    end
+    if correction.What ~= "Correction" then
+        return "What expected=Correction actual=" .. boundedValue(correction.What)
+    end
+    if correction.CorrectionActive ~= true then
+        return "CorrectionActive expected=true actual="
+            .. boundedValue(correction.CorrectionActive)
+    end
+    if not numbersEqual(correction.CorrectionAmount, 1) then
+        return "CorrectionAmount expected=1 actual="
+            .. boundedValue(correction.CorrectionAmount)
+    end
+    if type(correction.CorrectionSyncID) ~= "string"
+        or correction.CorrectionSyncID == "" then
+        return "CorrectionSyncID is unavailable"
+    end
+    if type(correction.CorrectionMasks) ~= "table"
+        or not treeIsArray(correction.CorrectionMasks)
+        or #correction.CorrectionMasks ~= 1 then
+        return "CorrectionMasks expected exactly one mask"
+    end
+    return subjectMaskMismatch(correction.CorrectionMasks[1])
+end
+
+local function subjectTrees(beforeSettings, currentSettings, lightroomVersion)
+    if type(beforeSettings) ~= "table" or type(currentSettings) ~= "table" then
+        return nil, nil, "Develop settings readback is unavailable"
+    end
+    local beforeGlobal, beforeOk = settingsWithoutMaskTree(beforeSettings)
+    local currentGlobal, currentOk = settingsWithoutMaskTree(currentSettings)
+    if not beforeOk or not currentOk or not deepEqual(beforeGlobal, currentGlobal) then
+        return nil, nil, "Global Develop settings changed while creating the Subject mask"
+    end
+    local beforeState = schemaState(beforeSettings)
+    local currentState = schemaState(currentSettings)
+    if beforeState == nil or currentState ~= "materialized" then
+        return nil, nil, "MaskGroupBasedCorrections readback is unavailable or unrecognized"
+    end
+    if beforeState == "unmaterialized_empty"
+        and not unmaterializedEmptySchemaKnown(beforeSettings, lightroomVersion) then
+        return nil, nil,
+            "Unmaterialized empty mask schema is not verified for this Lightroom/process version"
+    end
+    local beforeTree = beforeState == "unmaterialized_empty"
+        and {}
+        or beforeSettings.MaskGroupBasedCorrections
+    local currentTree = currentSettings.MaskGroupBasedCorrections
+    if not treeIsArray(beforeTree) or not treeIsArray(currentTree) then
+        return nil, nil, "MaskGroupBasedCorrections readback is not an array"
+    end
+    return beforeTree, currentTree
+end
+
+-- Locate an SDK-generated Subject only by the complete checkpoint delta. The
+-- controller owns every opaque AI field and identity; this adapter never
+-- synthesizes or guesses that payload.
+function MaskAdapter.findSubjectDelta(beforeSettings, currentSettings, lightroomVersion)
+    local beforeTree, currentTree, treeError = subjectTrees(
+        beforeSettings,
+        currentSettings,
+        lightroomVersion
+    )
+    if not beforeTree then return nil, treeError end
+
+    local candidates = {}
+    local diagnostics = {}
+    for correctionIndex, correction in ipairs(currentTree) do
+        local mismatch = subjectCorrectionMismatch(correction)
+        local remaining = {}
+        for index, item in ipairs(currentTree) do
+            if index ~= correctionIndex then table.insert(remaining, item) end
+        end
+        local exactDelta = deepEqual(remaining, beforeTree)
+        if mismatch == nil and exactDelta then
+            table.insert(candidates, {
+                correction_index = correctionIndex,
+                correction = correction,
+                mask = correction.CorrectionMasks[1],
+            })
+        end
+        if #diagnostics < 4 then
+            table.insert(diagnostics,
+                "index=" .. tostring(correctionIndex)
+                .. ",shape=" .. tostring(mismatch or "subject")
+                .. ",delta=" .. tostring(exactDelta))
+        end
+    end
+    if #candidates ~= 1 then
+        return nil, "Subject checkpoint delta is absent or ambiguous (candidate_count="
+            .. tostring(#candidates) .. "; candidates=["
+            .. table.concat(diagnostics, ";") .. "])"
+    end
+    return candidates[1]
+end
+
+function MaskAdapter.patchSubjectCorrection(
+    beforeSettings,
+    currentSettings,
+    args,
+    lightroomVersion
+)
+    local candidate, candidateError = MaskAdapter.findSubjectDelta(
+        beforeSettings,
+        currentSettings,
+        lightroomVersion
+    )
+    if not candidate then return nil, candidateError end
+    local updated, supported = cloneSerializable(currentSettings, 0, {})
+    if not supported then return nil, "Subject readback contains unsupported nested values" end
+    local correction = updated.MaskGroupBasedCorrections[candidate.correction_index]
+    local mask = correction.CorrectionMasks[1]
+    correction.CorrectionName = args.name
+    mask.MaskName = args.name
+    for key, value in pairs(correctionLocalSettings(args.local_settings)) do
+        correction[key] = value
+    end
+    return updated
+end
+
+function MaskAdapter.subjectOpaquePayloadPreserved(
+    beforeSettings,
+    generatedSettings,
+    finalSettings,
+    lightroomVersion
+)
+    local generated, generatedError = MaskAdapter.findSubjectDelta(
+        beforeSettings,
+        generatedSettings,
+        lightroomVersion
+    )
+    if not generated then return false, generatedError end
+    local final, finalError = MaskAdapter.findSubjectDelta(
+        beforeSettings,
+        finalSettings,
+        lightroomVersion
+    )
+    if not final then return false, finalError end
+    local generatedMask, generatedOk = cloneSerializable(generated.mask, 0, {})
+    local finalMask, finalOk = cloneSerializable(final.mask, 0, {})
+    if not generatedOk or not finalOk then
+        return false, "Subject AI mask payload cannot be serialized for comparison"
+    end
+    -- User naming is the only permitted mask-table patch. Every controller
+    -- identity, subtype, error state, and opaque AI field must survive exactly.
+    generatedMask.MaskName = nil
+    finalMask.MaskName = nil
+    if not deepEqual(generatedMask, finalMask) then
+        return false, "Subject AI opaque payload changed while applying local settings"
+    end
+    return true
+end
+
+function MaskAdapter.reconcileSubject(beforeSettings, currentSettings, args, lightroomVersion)
+    local candidate, candidateError = MaskAdapter.findSubjectDelta(
+        beforeSettings,
+        currentSettings,
+        lightroomVersion
+    )
+    if not candidate then return nil, candidateError end
+    local correction = candidate.correction
+    local mask = candidate.mask
+    if correction.CorrectionName ~= args.name or mask.MaskName ~= args.name then
+        return nil, "Subject name readback does not match the requested operation"
+    end
+    local semanticMismatch = correctionPayloadMismatch(correction, args, true)
+    if semanticMismatch then
+        return nil, "Subject local settings readback mismatch: " .. semanticMismatch
+    end
+    local payloadFieldCount = aiPayloadFieldCount(mask)
+    if payloadFieldCount < 1 then
+        return nil, "Subject AI opaque payload readback is unavailable"
+    end
+    local geometry = {
+        coordinate_system = "lightroom_ai",
+        coordinate_units = "opaque",
+        ai_payload_present = true,
+        ai_payload_field_count = payloadFieldCount,
+        ai_mask_type = mask.What,
+        ai_mask_subtype = mask.MaskSubType,
+        ai_error_state = mask.ErrorReason == nil and "absent" or "zero",
+    }
+    if mask.ErrorReason ~= nil then geometry.error_reason = mask.ErrorReason end
+    return {
+        mask_id = mask.MaskSyncID,
+        correction_id = correction.CorrectionSyncID,
+        name = mask.MaskName,
+        mask_kind = "subject",
+        kind_parameters = {},
+        initial_local_settings = readbackLocalSettings(correction, args.local_settings),
+        geometry = geometry,
+        preservation = {
+            exactly_one_mask_added = true,
+            existing_mask_tree_unchanged = true,
+            global_develop_unchanged = true,
+            source_untouched = true,
+            sidecar_untouched = true,
+        },
+    }
 end
 
 local function rewriteDiagnostic(tree, beforeTree, expectedCorrection, args, allowCenterWeightFallback)

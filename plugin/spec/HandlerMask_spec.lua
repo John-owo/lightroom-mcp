@@ -1,4 +1,5 @@
 local helper = require 'spec_helper'
+local MaskAdapter = require 'MaskAdapter'
 
 local function clone(value)
     if type(value) ~= "table" then return value end
@@ -112,9 +113,72 @@ local function setup(opts)
         if opts.failAfterApply then error("SDK timeout after mask write", 0) end
         return result
     end
+    local originalModule = opts.currentModule or "library"
+    local currentModule = originalModule
+    local moduleSwitches = {}
+    local subjectCreateCalls = 0
+    local function defaultSubjectCorrection()
+        return {
+            What = "Correction",
+            CorrectionActive = true,
+            CorrectionAmount = 1,
+            CorrectionName = "Subject 1",
+            CorrectionSyncID = "lightroom-subject-correction",
+            CorrectionMasks = {
+                {
+                    What = "Mask/Image",
+                    MaskActive = true,
+                    MaskName = "Subject 1",
+                    MaskBlendMode = 0,
+                    MaskInverted = false,
+                    MaskSyncID = "lightroom-subject-mask",
+                    MaskValue = 1,
+                    MaskVersion = 1,
+                    MaskSubType = 1,
+                    ReferencePoint = "0.500000 0.500000",
+                    ErrorReason = 0,
+                    OpaqueImagePayload = "generated-by-lightroom",
+                },
+            },
+        }
+    end
+    local applicationView = {
+        getCurrentModuleName = function() return currentModule end,
+        switchToModule = function(name)
+            table.insert(moduleSwitches, name)
+            if opts.failModuleSwitch then error("module switch failed", 0) end
+            if opts.failModuleRestore and name == originalModule then
+                error("module restore failed", 0)
+            end
+            currentModule = name
+            if opts.onSwitchModule then
+                opts.onSwitchModule(name, catalog, copy, other)
+            end
+        end,
+    }
+    local developController = {}
+    if opts.subjectControllerAvailable ~= false then
+        developController.createNewMask = function(category, kind)
+            subjectCreateCalls = subjectCreateCalls + 1
+            assert.are.equal("aiSelection", category)
+            assert.are.equal("subject", kind)
+            if opts.subjectControllerFailure == "before" then
+                error("subject controller failed before creation", 0)
+            end
+            local additions = opts.subjectAdditions or { defaultSubjectCorrection() }
+            for _, correction in ipairs(additions) do
+                table.insert(copy.__meta.developSettings.MaskGroupBasedCorrections, clone(correction))
+            end
+            if opts.subjectControllerFailure == "after" then
+                error("subject controller timeout after creation", 0)
+            end
+        end
+    end
     helper.installImport({
         LrApplication = application,
-        LrTasks = { pcall = pcall },
+        LrApplicationView = applicationView,
+        LrDevelopController = developController,
+        LrTasks = { pcall = pcall, sleep = function() end },
         LrLogger = helper.defaultLrLogger(),
     })
     package.loaded.HandlerMask = nil
@@ -122,6 +186,10 @@ local function setup(opts)
     return catalog, master, copy, other, require 'HandlerMask', {
         pluginPresets = pluginPresets,
         getAddedPresetCalls = function() return addedPresetCalls end,
+        getSubjectCreateCalls = function() return subjectCreateCalls end,
+        getCurrentModule = function() return currentModule end,
+        getModuleSwitches = function() return moduleSwitches end,
+        defaultSubjectCorrection = defaultSubjectCorrection,
     }
 end
 
@@ -146,6 +214,23 @@ local function brushArgs(overrides)
     }
     for key, value in pairs(overrides or {}) do args[key] = value end
     return args
+end
+
+local function subjectArgs(overrides)
+    local args = brushArgs({
+        operation_id = "subject-op-001",
+        mask_kind = "subject",
+        name = "Squirrel subject lift",
+        kind_parameters = {},
+        local_settings = { exposure = 0.75 },
+    })
+    for key, value in pairs(overrides or {}) do args[key] = value end
+    return args
+end
+
+local function subjectCheckpointName(args)
+    return "Lightroom MCP Mask Checkpoint [" .. args.operation_id
+        .. "] [request:" .. MaskAdapter.requestFingerprint(args) .. "]"
 end
 
 describe("HandlerMask.createMask", function()
@@ -742,22 +827,353 @@ describe("HandlerMask.createMask", function()
         assert.are.equal(1, state.getAddedPresetCalls())
     end)
 
-    it("returns explicit unsupported for Subject and Sky without checkpoint or write", function()
-        for _, kind in ipairs({ "subject", "sky" }) do
-            local catalog, _, _, _, Handler, state = setup()
-            local result = Handler.createMask(brushArgs({
-                mask_kind = kind,
-                kind_parameters = {},
-                operation_id = "ai-" .. kind,
-            }))
+    it("refuses Subject before checkpoint or mutation when the controller API is missing", function()
+        local catalog, _, _, _, Handler, state = setup({ subjectControllerAvailable = false })
 
-            assert.are.equal("unsupported", result.result)
-            assert.are.equal("ai-" .. kind, result.operation_id)
-            assert.are.equal(0, catalog:getWriteAccessCount())
-            assert.are.equal(0, state.getAddedPresetCalls())
-            assert.are.equal("not_needed", result.selection_restoration.status)
-            assert.is_false(result.capability.kinds[kind].supported)
-        end
+        local result = Handler.createMask(subjectArgs({ operation_id = "subject-api-missing" }))
+
+        assert.are.equal("unsupported", result.result)
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(0, state.getAddedPresetCalls())
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.is_false(result.capability.kinds.subject.supported)
+    end)
+
+    it("creates a real Subject through LrDevelopController, patches only its name/local settings, and restores module/selection", function()
+        local catalog, _, copy, other, Handler, state = setup()
+        local before = clone(copy.__meta.developSettings)
+
+        local result = Handler.createMask(subjectArgs())
+
+        assert.are.equal("created", result.result)
+        assert.are.equal("subject", result.mask_kind)
+        assert.are.equal("Squirrel subject lift", result.name)
+        assert.are.same({}, result.kind_parameters)
+        assert.are.equal("lightroom_ai", result.geometry.coordinate_system)
+        assert.are.equal("opaque", result.geometry.coordinate_units)
+        assert.is_true(result.geometry.ai_payload_present)
+        assert.is_true(result.geometry.ai_payload_field_count >= 1)
+        assert.are.equal("Mask/Image", result.geometry.ai_mask_type)
+        assert.are.equal(1, result.geometry.ai_mask_subtype)
+        assert.are.equal(0, result.geometry.error_reason)
+        assert.are.equal(0.75, result.initial_local_settings.exposure)
+        assert.is_true(result.preservation.exactly_one_mask_added)
+        assert.is_true(result.preservation.existing_mask_tree_unchanged)
+        assert.is_true(result.preservation.global_develop_unchanged)
+        assert.are.equal(1, state.getSubjectCreateCalls())
+        assert.are.equal(1, catalog:getWriteAccessCount())
+        assert.are.equal(1, state.getAddedPresetCalls())
+        assert.are.equal("library", state.getCurrentModule())
+        assert.are.same({ "develop", "library" }, state.getModuleSwitches())
+        assert.are.equal(other, catalog:getTargetPhoto())
+        assert.are.same({ other }, catalog:getTargetPhotos())
+        assert.are.same({ "old-folder" }, catalog:getActiveSources())
+        assert.are.equal(before.Exposure2012, copy.__meta.developSettings.Exposure2012)
+        assert.are.equal(before.Contrast2012, copy.__meta.developSettings.Contrast2012)
+        assert.are.equal("generated-by-lightroom", copy.__meta.developSettings
+            .MaskGroupBasedCorrections[2].CorrectionMasks[1].OpaqueImagePayload)
+    end)
+
+    it("accepts the live normalization where a successful Subject omits ErrorReason", function()
+        local correction = {
+            What = "Correction", CorrectionActive = true, CorrectionAmount = 1,
+            CorrectionName = "Subject 1", CorrectionSyncID = "subject-no-error-field",
+            LocalToningSaturation = 0,
+            CorrectionMasks = { {
+                What = "Mask/Image", MaskActive = true, MaskName = "Subject 1",
+                MaskBlendMode = 0, MaskInverted = false,
+                MaskSyncID = "subject-mask-no-error-field", MaskValue = 1,
+                MaskVersion = 1, MaskSubType = 1,
+                ReferencePoint = "0.500000 0.500000",
+                OpaqueImagePayload = "generated-with-omitted-error",
+            } },
+        }
+        local _, _, _, _, Handler = setup({ subjectAdditions = { correction } })
+
+        local result = Handler.createMask(subjectArgs({ operation_id = "subject-no-error" }))
+
+        assert.are.equal("created", result.result)
+        assert.are.equal("absent", result.geometry.ai_error_state)
+        assert.is_nil(result.geometry.error_reason)
+    end)
+
+    it("rejects a nonzero unknown Subject local setting", function()
+        local correction = {
+            What = "Correction", CorrectionActive = true, CorrectionAmount = 1,
+            CorrectionName = "Subject 1", CorrectionSyncID = "subject-unknown-local",
+            LocalToningSaturation = 1,
+            CorrectionMasks = { {
+                What = "Mask/Image", MaskActive = true, MaskName = "Subject 1",
+                MaskBlendMode = 0, MaskInverted = false,
+                MaskSyncID = "subject-mask-unknown-local", MaskValue = 1,
+                MaskVersion = 1, MaskSubType = 1,
+                ReferencePoint = "0.500000 0.500000",
+                OpaqueImagePayload = "generated-with-nonzero-unknown-local",
+            } },
+        }
+        local _, _, _, _, Handler = setup({ subjectAdditions = { correction } })
+
+        local result = Handler.createMask(subjectArgs({ operation_id = "subject-bad-local" }))
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_true(result.reason:find("LocalToningSaturation", 1, true) ~= nil)
+    end)
+
+    it("fails closed for a wrong AI kind or ambiguous Subject delta", function()
+        local subjectCorrection = {
+            What = "Correction", CorrectionActive = true, CorrectionAmount = 1,
+            CorrectionName = "Subject 1", CorrectionSyncID = "subject-correction",
+            CorrectionMasks = { {
+                What = "Mask/Image", MaskActive = true, MaskName = "Subject 1",
+                MaskSyncID = "subject-mask", MaskValue = 1, MaskVersion = 1,
+                MaskSubType = 1, ReferencePoint = "0.5 0.5", ErrorReason = 0,
+                OpaqueImagePayload = "ambiguous-ai-payload",
+            } },
+        }
+        local wrongKind = clone(subjectCorrection)
+        wrongKind.CorrectionMasks[1].MaskSubType = 2
+        local catalog, _, _, _, Handler, state = setup({ subjectAdditions = { wrongKind } })
+        local result = Handler.createMask(subjectArgs({ operation_id = "subject-wrong-kind" }))
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.are.equal(1, state.getSubjectCreateCalls())
+        assert.are.equal(0, catalog:getWriteAccessCount())
+
+        local before = baseDevelopSettings()
+        table.insert(before.MaskGroupBasedCorrections, clone(subjectCorrection))
+        local catalog2, _, _, _, Handler2, state2 = setup({
+            copy = { developSettings = before },
+            subjectAdditions = { clone(subjectCorrection) },
+        })
+        local result2 = Handler2.createMask(subjectArgs({ operation_id = "subject-ambiguous-delta" }))
+        assert.are.equal("REVIEW_REQUIRED", result2.result)
+        assert.is_true(result2.reason:find("candidate_count=2", 1, true) ~= nil)
+        assert.are.equal(1, state2.getSubjectCreateCalls())
+        assert.are.equal(0, catalog2:getWriteAccessCount())
+        assert.are.equal("library", state2.getCurrentModule())
+    end)
+
+    it("returns review when module restoration cannot be verified after Subject creation", function()
+        local _, _, _, _, Handler, state = setup({ failModuleRestore = true })
+        local result = Handler.createMask(subjectArgs({ operation_id = "subject-module-restore" }))
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_true(result.reason:find("restoration failed", 1, true) ~= nil)
+        assert.are.equal(1, state.getSubjectCreateCalls())
+        assert.are.equal("develop", state.getCurrentModule())
+    end)
+
+    it("does not retry the controller after a failure and reconciles only an exact created delta", function()
+        local catalog, _, _, _, Handler, state = setup({ subjectControllerFailure = "before" })
+        local result = Handler.createMask(subjectArgs({ operation_id = "subject-controller-failure" }))
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.are.equal(1, state.getSubjectCreateCalls())
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal("library", state.getCurrentModule())
+
+        local catalog2, _, _, _, Handler2, state2 = setup({ subjectControllerFailure = "after" })
+        local result2 = Handler2.createMask(subjectArgs({ operation_id = "subject-controller-timeout" }))
+        assert.are.equal("reconciled", result2.result)
+        assert.are.equal(1, state2.getSubjectCreateCalls())
+        assert.are.equal(1, catalog2:getWriteAccessCount())
+        assert.are.equal("library", state2.getCurrentModule())
+    end)
+
+    it("reconciles Subject from the exact checkpoint delta without creating a duplicate", function()
+        local before = baseDevelopSettings()
+        local correction = {
+            What = "Correction", CorrectionActive = true, CorrectionAmount = 1,
+            CorrectionName = "Squirrel subject lift",
+            CorrectionSyncID = "persisted-subject-correction",
+            CorrectionMasks = { {
+                What = "Mask/Image", MaskActive = true,
+                MaskName = "Squirrel subject lift", MaskBlendMode = 0,
+                MaskInverted = false, MaskSyncID = "persisted-subject-mask",
+                MaskValue = 1, MaskVersion = 1, MaskSubType = 1,
+                ReferencePoint = "0.500000 0.500000", ErrorReason = 0,
+                OpaqueImagePayload = "persisted-ai-payload",
+            } },
+            LocalExposure2012 = 0.75,
+        }
+        local current = clone(before)
+        table.insert(current.MaskGroupBasedCorrections, correction)
+        local args = subjectArgs({ operation_id = "subject-retry" })
+        local checkpointName = subjectCheckpointName(args)
+        local catalog, _, copy, _, Handler, state = setup({
+            copy = { developSettings = current },
+            pluginPresets = { fakePreset(checkpointName, before, "subject-checkpoint") },
+        })
+
+        local result = Handler.createMask(args)
+
+        assert.are.equal("reconciled", result.result)
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(2, #copy.__meta.developSettings.MaskGroupBasedCorrections)
+        assert.are.equal("persisted-ai-payload", result.geometry.ai_payload_present
+            and copy.__meta.developSettings.MaskGroupBasedCorrections[2]
+                .CorrectionMasks[1].OpaqueImagePayload)
+    end)
+
+    it("completes one exact unpatched Subject delta on retry without calling the controller", function()
+        local before = baseDevelopSettings()
+        local current = clone(before)
+        table.insert(current.MaskGroupBasedCorrections, {
+            What = "Correction", CorrectionActive = true, CorrectionAmount = 1,
+            CorrectionName = "Subject 1", CorrectionSyncID = "partial-subject-correction",
+            CorrectionMasks = { {
+                What = "Mask/Image", MaskActive = true, MaskName = "Subject 1",
+                MaskBlendMode = 0, MaskInverted = false,
+                MaskSyncID = "partial-subject-mask", MaskValue = 1,
+                MaskVersion = 1, MaskSubType = 1,
+                ReferencePoint = "0.500000 0.500000",
+                OpaqueImagePayload = "partial-ai-payload",
+            } },
+        })
+        local args = subjectArgs({ operation_id = "subject-partial-retry" })
+        local checkpointName = subjectCheckpointName(args)
+        local catalog, _, copy, _, Handler, state = setup({
+            copy = { developSettings = current },
+            pluginPresets = { fakePreset(checkpointName, before, "subject-partial-checkpoint") },
+        })
+
+        local result = Handler.createMask(args)
+
+        assert.are.equal("reconciled", result.result)
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.are.equal(1, catalog:getWriteAccessCount())
+        assert.are.equal("Squirrel subject lift",
+            copy.__meta.developSettings.MaskGroupBasedCorrections[2].CorrectionName)
+        assert.are.equal(0.75,
+            copy.__meta.developSettings.MaskGroupBasedCorrections[2].LocalExposure2012)
+        assert.are.equal("partial-ai-payload",
+            copy.__meta.developSettings.MaskGroupBasedCorrections[2]
+                .CorrectionMasks[1].OpaqueImagePayload)
+    end)
+
+    it("refuses reuse of a Subject operation id when the request fingerprint changed", function()
+        local before = baseDevelopSettings()
+        local originalArgs = subjectArgs({
+            operation_id = "subject-request-reuse",
+            name = "Original subject lift",
+            local_settings = { exposure = 0.25 },
+        })
+        local current = clone(before)
+        table.insert(current.MaskGroupBasedCorrections, {
+            What = "Correction", CorrectionActive = true, CorrectionAmount = 1,
+            CorrectionName = originalArgs.name,
+            CorrectionSyncID = "original-subject-correction",
+            LocalExposure2012 = 0.25,
+            CorrectionMasks = { {
+                What = "Mask/Image", MaskActive = true, MaskName = originalArgs.name,
+                MaskBlendMode = 0, MaskInverted = false,
+                MaskSyncID = "original-subject-mask", MaskValue = 1,
+                MaskVersion = 1, MaskSubType = 1,
+                ReferencePoint = "0.500000 0.500000",
+                OpaqueImagePayload = "original-ai-payload",
+            } },
+        })
+        local catalog, _, copy, _, Handler, state = setup({
+            copy = { developSettings = current },
+            pluginPresets = { fakePreset(
+                subjectCheckpointName(originalArgs),
+                before,
+                "subject-request-reuse-checkpoint"
+            ) },
+        })
+        local changedArgs = subjectArgs({
+            operation_id = originalArgs.operation_id,
+            name = "Changed subject lift",
+            local_settings = { exposure = 0.75 },
+        })
+
+        local result = Handler.createMask(changedArgs)
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_true(result.reason:find("changed-request reuse", 1, true) ~= nil)
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal("Original subject lift",
+            copy.__meta.developSettings.MaskGroupBasedCorrections[2].CorrectionName)
+        assert.are.equal(0.25,
+            copy.__meta.developSettings.MaskGroupBasedCorrections[2].LocalExposure2012)
+    end)
+
+    it("refuses Brush reuse of an operation id bound to a Subject checkpoint", function()
+        local before = baseDevelopSettings()
+        local operationId = "cross-kind-operation-reuse"
+        local subjectRequest = subjectArgs({ operation_id = operationId })
+        local catalog, _, copy, _, Handler, state = setup({
+            copy = { developSettings = clone(before) },
+            pluginPresets = { fakePreset(
+                subjectCheckpointName(subjectRequest),
+                before,
+                "cross-kind-subject-checkpoint"
+            ) },
+        })
+
+        local result = Handler.createMask(brushArgs({ operation_id = operationId }))
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.are.equal(0, state.getAddedPresetCalls())
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.same(before, copy.__meta.developSettings)
+    end)
+
+    it("never invokes the Subject controller when a reused checkpoint has no delta", function()
+        local before = baseDevelopSettings()
+        local args = subjectArgs({ operation_id = "subject-empty-retry" })
+        local catalog, _, copy, _, Handler, state = setup({
+            copy = { developSettings = clone(before) },
+            pluginPresets = { fakePreset(
+                subjectCheckpointName(args),
+                before,
+                "subject-empty-retry-checkpoint"
+            ) },
+        })
+
+        local result = Handler.createMask(args)
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_true(result.reason:find("controller will not be re-invoked", 1, true) ~= nil)
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(1, #copy.__meta.developSettings.MaskGroupBasedCorrections)
+    end)
+
+    it("restores selection and active sources after returning to the original module", function()
+        local catalog, _, copy, other, Handler, state = setup({
+            onSwitchModule = function(name, switchedCatalog, workflowCopy)
+                if name == "library" then
+                    switchedCatalog:setSelectedPhotos(workflowCopy, {})
+                    switchedCatalog:setActiveSources({ "module-side-effect" })
+                end
+            end,
+        })
+
+        local result = Handler.createMask(subjectArgs({
+            operation_id = "subject-final-restoration",
+        }))
+
+        assert.are.equal("created", result.result)
+        assert.are.equal("restored", result.selection_restoration.status)
+        assert.is_true(result.selection_restoration.verified)
+        assert.are.equal("library", state.getCurrentModule())
+        assert.are.equal(other, catalog:getTargetPhoto())
+        assert.are.same({ other }, catalog:getTargetPhotos())
+        assert.are.same({ "old-folder" }, catalog:getActiveSources())
+        assert.are.equal(1, state.getSubjectCreateCalls())
+        assert.are.equal(2, #copy.__meta.developSettings.MaskGroupBasedCorrections)
+    end)
+
+    it("keeps Sky explicitly unsupported without checkpoint or mutation", function()
+        local catalog, _, _, _, Handler, state = setup()
+        local result = Handler.createMask(brushArgs({
+            mask_kind = "sky", kind_parameters = {}, operation_id = "ai-sky",
+        }))
+        assert.are.equal("unsupported", result.result)
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(0, state.getAddedPresetCalls())
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.is_false(result.capability.kinds.sky.supported)
     end)
 
     it("returns explicit unsupported for an unknown runtime mask schema", function()

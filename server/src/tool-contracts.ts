@@ -4,6 +4,9 @@ type InputSchema = Tool["inputSchema"];
 
 export const OPERATION_SEMANTICS_META_KEY =
   "io.github.john-owo.lightroom-mcp/operation-semantics";
+export const TOOL_CONTRACT_REVISION_META_KEY =
+  "io.github.john-owo.lightroom-mcp/contract-revision";
+export const CREATE_MASK_CONTRACT_REVISION = "create-mask.v2";
 
 export type OperationSideEffect =
   | "read_only"
@@ -57,6 +60,7 @@ export interface ToolContract {
   inputSchema: InputSchema;
   outputSchema?: Tool["outputSchema"];
   operationSemantics: OperationSemantics;
+  contractRevision?: string;
 }
 
 type ToolContractDefinition = Omit<ToolContract, "operationSemantics">;
@@ -374,12 +378,12 @@ const maskCheckpointOutputSchema = {
   required: ["name", "uuid", "scope", "recovery_evidence", "true_undo"],
 };
 
-const maskGeometryOutputSchema = {
+const brushMaskGeometryOutputSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    coordinate_system: { type: "string", minLength: 1 },
-    coordinate_units: { type: "string", minLength: 1 },
+    coordinate_system: { enum: ["normalized_image"] },
+    coordinate_units: { enum: ["unit_interval"] },
     point_count: { type: "integer", minimum: 1 },
     bounds: {
       type: "object",
@@ -392,10 +396,36 @@ const maskGeometryOutputSchema = {
       },
       required: ["x_min", "x_max", "y_min", "y_max"],
     },
-    ai_payload_present: { type: "boolean" },
-    ai_payload_field_count: { type: "integer", minimum: 0 },
   },
   required: ["coordinate_system", "coordinate_units", "point_count", "bounds"],
+};
+
+const aiMaskGeometryOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    coordinate_system: { enum: ["lightroom_ai"] },
+    coordinate_units: { enum: ["opaque"] },
+    ai_payload_present: { enum: [true] },
+    ai_payload_field_count: { type: "integer", minimum: 1 },
+    ai_mask_type: { enum: ["Mask/Image"] },
+    ai_mask_subtype: { enum: [1] },
+    ai_error_state: { enum: ["absent", "zero"] },
+    error_reason: { enum: [0] },
+  },
+  required: [
+    "coordinate_system",
+    "coordinate_units",
+    "ai_payload_present",
+    "ai_payload_field_count",
+    "ai_mask_type",
+    "ai_mask_subtype",
+    "ai_error_state",
+  ],
+};
+
+const maskGeometryOutputSchema = {
+  oneOf: [brushMaskGeometryOutputSchema, aiMaskGeometryOutputSchema],
 };
 
 const maskPreservationOutputSchema = {
@@ -414,6 +444,23 @@ const maskPreservationOutputSchema = {
     "global_develop_unchanged",
     "source_untouched",
     "sidecar_untouched",
+  ],
+};
+
+const maskValidationFailureOutputSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    raw_response_json: { type: "string", maxLength: 16_384 },
+    raw_response_truncated: { type: "boolean" },
+    raw_response_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    validator_summary: { type: "string", minLength: 1, maxLength: 2_048 },
+  },
+  required: [
+    "raw_response_json",
+    "raw_response_truncated",
+    "raw_response_sha256",
+    "validator_summary",
   ],
 };
 
@@ -448,14 +495,19 @@ export const MASK_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
     geometry: maskGeometryOutputSchema,
     checkpoint: maskCheckpointOutputSchema,
     preservation: maskPreservationOutputSchema,
+    validation_failure: maskValidationFailureOutputSchema,
     reason: { type: "string", minLength: 1 },
   },
-  required: ["operation_id", "result", "capability", "selection_restoration"],
+  required: ["operation_id", "result"],
   oneOf: [
     {
       properties: {
         result: { enum: ["created", "reconciled"] },
+        mask_kind: { enum: ["brush"] },
+        kind_parameters: brushKindParametersSchema,
+        geometry: brushMaskGeometryOutputSchema,
       },
+      not: { required: ["validation_failure"] },
       required: [
         "photo",
         "master",
@@ -471,15 +523,55 @@ export const MASK_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
         "geometry",
         "checkpoint",
         "preservation",
+        "capability",
+        "selection_restoration",
+      ],
+    },
+    {
+      properties: {
+        result: { enum: ["created", "reconciled"] },
+        mask_kind: { enum: ["subject"] },
+        kind_parameters: aiKindParametersSchema,
+        geometry: aiMaskGeometryOutputSchema,
+      },
+      not: { required: ["validation_failure"] },
+      required: [
+        "photo",
+        "master",
+        "mask_id",
+        "correction_id",
+        "name",
+        "mask_kind",
+        "kind_parameters",
+        "initial_local_settings",
+        "lightroom_version",
+        "process_version",
+        "mask_schema",
+        "geometry",
+        "checkpoint",
+        "preservation",
+        "capability",
+        "selection_restoration",
       ],
     },
     {
       properties: { result: { enum: ["unsupported"] } },
-      required: ["reason"],
+      required: ["capability", "selection_restoration", "reason"],
+      not: { required: ["validation_failure"] },
     },
     {
       properties: { result: { enum: ["REVIEW_REQUIRED"] } },
-      required: ["reason"],
+      required: ["capability", "selection_restoration", "reason"],
+      not: { required: ["validation_failure"] },
+    },
+    {
+      properties: { result: { enum: ["REVIEW_REQUIRED"] } },
+      required: [
+        "capability",
+        "selection_restoration",
+        "reason",
+        "validation_failure",
+      ],
     },
   ],
 };
@@ -721,6 +813,7 @@ const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
   },
   {
     name: "create_mask",
+    contractRevision: CREATE_MASK_CONTRACT_REVISION,
     luaHandler: "HandlerMask.createMask",
     description:
       "Create or reconcile one allowlisted Lightroom mask on one identity-verified Workflow Copy. Requires stable photo and Master UUIDs, an operation ID, explicit structured kind parameters, and allowlisted local settings. The plugin creates a unique checkpoint before mutation, serializes selection-sensitive work, and reports success only after Lightroom readback proves the new mask and preservation; Subject and Sky may return unsupported when runtime AI capability is not verified.",

@@ -84,7 +84,7 @@ style_status, lighting_cluster, confidence, notes
 | `compare_develop_presets` | 產生 base／candidate 的逐設定差異 |
 | `create_develop_preset` | 從代表照片選定欄位建立版本化 checkpoint |
 | `export_develop_preset` | 複製 Lightroom preset backing file，永不覆寫既有檔案 |
-| `create_mask` | 在 identity-verified Workflow Copy 上建立或 reconcile 一個明確 schema 的 mask；Brush 受 runtime capability gate，Subject／Sky 未具備可驗證 AI adapter 時回傳 `unsupported` |
+| `create_mask` | 在 identity-verified Workflow Copy 上建立或 reconcile 一個明確 schema 的 mask；Brush 使用明確路徑，Subject 使用 Lightroom 的 Select Subject 並保留其不透明 AI payload；未驗證的 runtime 或 Sky 會回傳 `unsupported` |
 
 既有的 `list_develop_presets` 與 `apply_develop_preset` 也支援 UUID、folder、scope；`set_develop_settings`、`copy_develop_settings` 與 checkpoint 建立支援主曲線及 RGB point-curve arrays。
 
@@ -150,7 +150,7 @@ Copy-Item -Path "$skillSource\*" -Destination $skillTarget -Recurse -Force
 - 不在未批准的 master edit 上測試。
 - 不只看相機 JPG 就宣稱色彩或 preset 已完成。
 - 不把 crop、白平衡、profile、鏡頭狀態或 detail 設定默默複製到整批。
-- MCP 的 `create_virtual_copy` 只接受穩定 catalog ID、預期 Master UUID 與可重用的 operation ID，並以 identity readback 和 marker reconciliation 防止盲目重複建立；`reconcile_virtual_copy` 是只讀 recovery query，只掃描 exact marker、驗證 Master／Copy 關係，不改 selection 也不建立 Copy。`create_mask` 只接受 identity-verified Workflow Copy，使用明確的 Brush path／size／feather／flow／density schema，先建立不覆寫的 plugin checkpoint，再以 serialized selection、完整 mask-tree／global-Develop preservation 與 SDK readback 決定成功。Lightroom Classic 15.5.1／ProcessVersion 15.4 的 Brush 建立、完整重啟後 reconciliation 與 before/after render 已完成 live 驗證；Lightroom 會重寫 SyncID、在 Dabs 前加入 flow token，並可能只以 `CenterWeight` 保存 feather，adapter 只在唯一且完整 checkpoint delta 精確吻合時接受這些正規化。該 runtime 目前只有局部 Exposure 通過重啟持久化驗證，其他局部設定會在 mutation 前拒絕；Subject／Sky 在未具備可驗證 AI adapter 時明確回傳 `unsupported`。使用者視覺確認仍是獨立 gate。
+- MCP 的 `create_virtual_copy` 只接受穩定 catalog ID、預期 Master UUID 與可重用的 operation ID，並以 identity readback 和 marker reconciliation 防止盲目重複建立；`reconcile_virtual_copy` 是只讀 recovery query，只掃描 exact marker、驗證 Master／Copy 關係，不改 selection 也不建立 Copy。`create_mask` 只接受 identity-verified Workflow Copy，先建立不覆寫的 plugin checkpoint，再以 serialized selection、完整 mask-tree／global-Develop preservation 與 SDK readback 決定成功。Brush 使用明確的 path／size／feather／flow／density schema；Subject checkpoint 另綁定 request fingerprint，透過 Lightroom SDK Select Subject 建立，僅接受唯一完整 checkpoint delta、`Mask/Image`／`MaskSubType=1`，並原樣保存 Lightroom 的不透明 AI payload。Subject 與 Brush 不可用同一 operation ID 交叉重送。Lightroom Classic 15.5.1／ProcessVersion 15.4 的 Brush 與 Subject 建立、完整重啟後 reconciliation 及 before/after render 已完成 live 驗證；同一 Subject operation 的重送不會再次呼叫 AI controller。該 runtime 目前只有局部 Exposure 通過重啟持久化驗證，其他局部設定會在 mutation 前拒絕；Sky 仍明確回傳 `unsupported`。使用者已對 T63 Subject v8 回覆功能性 `render PASS`，確認遮色片確實生效；`+0.65 EV` 結果仍明顯過亮，只是診斷證據，不是可發布調色。
 - MCP 沒有 true undo；checkpoint 是 recovery evidence，不等於 Lightroom undo。需要修復、AI Denoise、Calibration、Color Grading 或 Point Color 時，交回 Lightroom 手動完成。
 - MCP checkpoint 的 backing format 由 Lightroom 決定；內建 preset 若沒有 backing file，不能匯出。
 

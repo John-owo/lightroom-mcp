@@ -5,8 +5,10 @@ import { TOOL_DEFINITIONS, listToolsHandler } from '../src/list-tools-handler.js
 import {
   DEVELOP_CURVE_SETTING_KEYS,
   DEVELOP_SETTING_KEYS,
+  CREATE_MASK_CONTRACT_REVISION,
   OPERATION_SEMANTICS,
   OPERATION_SEMANTICS_META_KEY,
+  TOOL_CONTRACT_REVISION_META_KEY,
   TOOL_CONTRACTS,
 } from '../src/tool-contracts.js';
 
@@ -59,13 +61,16 @@ describe('TOOL_DEFINITIONS', () => {
 
   it('is generated from tool contracts', () => {
     expect(TOOL_DEFINITIONS).toEqual(
-      TOOL_CONTRACTS.map(({ name, description, inputSchema, outputSchema, operationSemantics }) => ({
+      TOOL_CONTRACTS.map(({ name, description, inputSchema, outputSchema, operationSemantics, contractRevision }) => ({
         name,
         description,
         inputSchema,
         ...(outputSchema ? { outputSchema } : {}),
         _meta: {
           [OPERATION_SEMANTICS_META_KEY]: operationSemantics,
+          ...(contractRevision
+            ? { [TOOL_CONTRACT_REVISION_META_KEY]: contractRevision }
+            : {}),
         },
       })),
     );
@@ -345,12 +350,7 @@ describe('mask creation contract', () => {
     expect(tool?.outputSchema).toMatchObject({
       type: 'object',
       additionalProperties: false,
-      required: expect.arrayContaining([
-        'operation_id',
-        'result',
-        'capability',
-        'selection_restoration',
-      ]),
+      required: ['operation_id', 'result'],
     });
     expect(tool?.outputSchema?.oneOf).toEqual(expect.arrayContaining([
       expect.objectContaining({ required: expect.arrayContaining([
@@ -358,14 +358,114 @@ describe('mask creation contract', () => {
         'geometry',
         'checkpoint',
         'preservation',
+        'capability',
+        'selection_restoration',
       ]) }),
       expect.objectContaining({
         properties: { result: { enum: ['unsupported'] } },
-        required: ['reason'],
+        required: ['capability', 'selection_restoration', 'reason'],
       }),
       expect.objectContaining({
         properties: { result: { enum: ['REVIEW_REQUIRED'] } },
-        required: ['reason'],
+        required: ['capability', 'selection_restoration', 'reason'],
+        not: { required: ['validation_failure'] },
+      }),
+      expect.objectContaining({
+        properties: { result: { enum: ['REVIEW_REQUIRED'] } },
+        required: expect.arrayContaining(['validation_failure']),
+      }),
+    ]));
+    const outputProperties = tool?.outputSchema?.properties as Record<string, {
+      oneOf?: Array<Record<string, unknown>>;
+    }>;
+    expect(outputProperties.geometry.oneOf).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          coordinate_system: { enum: ['normalized_image'] },
+          coordinate_units: { enum: ['unit_interval'] },
+        }),
+        required: ['coordinate_system', 'coordinate_units', 'point_count', 'bounds'],
+      }),
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          coordinate_system: { enum: ['lightroom_ai'] },
+          coordinate_units: { enum: ['opaque'] },
+          ai_payload_present: { enum: [true] },
+          ai_mask_type: { enum: ['Mask/Image'] },
+          ai_mask_subtype: { enum: [1] },
+          ai_error_state: { enum: ['absent', 'zero'] },
+          error_reason: { enum: [0] },
+        }),
+        required: expect.arrayContaining([
+          'ai_payload_present',
+          'ai_payload_field_count',
+          'ai_mask_type',
+          'ai_mask_subtype',
+          'ai_error_state',
+        ]),
+      }),
+    ]));
+    expect(tool?.outputSchema?.properties?.validation_failure).toMatchObject({
+      additionalProperties: false,
+      required: expect.arrayContaining([
+        'raw_response_json',
+        'raw_response_truncated',
+        'raw_response_sha256',
+        'validator_summary',
+      ]),
+    });
+    const outputBranches = tool?.outputSchema?.oneOf as Array<{
+      properties?: Record<string, { enum?: string[] }>;
+    }>;
+    const successBranches = outputBranches.filter((branch) => {
+      const branchProperties = branch.properties as Record<string, {
+        enum?: string[];
+      }> | undefined;
+      return branchProperties?.result?.enum?.includes('created');
+    }) as Array<{
+      properties: Record<string, {
+        enum?: string[];
+        maxProperties?: number;
+        required?: string[];
+        properties?: Record<string, unknown>;
+      }>;
+    }>;
+    expect(successBranches).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          mask_kind: { enum: ['brush'] },
+          kind_parameters: expect.objectContaining({
+            required: [
+              'coordinate_system',
+              'coordinate_units',
+              'path',
+              'size',
+              'feather',
+              'flow',
+              'density',
+            ],
+          }),
+          geometry: expect.objectContaining({
+            required: ['coordinate_system', 'coordinate_units', 'point_count', 'bounds'],
+          }),
+        }),
+      }),
+      expect.objectContaining({
+        properties: expect.objectContaining({
+          mask_kind: { enum: ['subject'] },
+          kind_parameters: expect.objectContaining({ maxProperties: 0 }),
+          geometry: expect.objectContaining({
+            required: expect.arrayContaining([
+              'coordinate_system',
+              'coordinate_units',
+              'ai_payload_present',
+              'ai_payload_field_count',
+              'ai_mask_type',
+              'ai_mask_subtype',
+              'ai_error_state',
+            ]),
+          }),
+        }),
       }),
     ]));
     expect(semantics).toMatchObject({
@@ -378,6 +478,7 @@ describe('mask creation contract', () => {
       retry_policy: 'readback_before_retry',
       safe_to_resume: false,
     });
+    expect(metadata?.[TOOL_CONTRACT_REVISION_META_KEY]).toBe(CREATE_MASK_CONTRACT_REVISION);
   });
 });
 

@@ -1862,3 +1862,399 @@ Unverified boundaries:
   this worklog-only post-commit record is amended into that same local commit,
   so the final commit hash reported in the handoff supersedes `b9b284e`. No
   push, PR, issue, or configured-checkout mutation was performed.
+
+## 2026-09-01 - T62 visible-mask rerun after human visual failure
+
+- The user inspected the authoritative `clean-v3` pair and reported
+  `遮色片前後看起來沒有任何差別`. The human visual gate is now `FAIL`, not
+  pending. The technical localization result is retained but cannot substitute
+  for visible acceptance.
+- Re-read the RAW/Lightroom skill and its workflow/style/MCP references. It
+  requires a new bounded render loop when the visual gain is negligible and
+  keeps the user's render judgment separate from parser/live evidence.
+- Delegated a read-only strategy audit. It confirmed v3's effective stimulus
+  was weak (`+0.35 EV`, flow `0.8`, density `0.9`; only `6.6269%` of full-frame
+  pixels over max-channel delta 10 and corridor mean `9.6553/255`). It
+  recommended a fresh Copy and a body/head Brush using only the live-persistent
+  Exposure parameter at `+1.0 EV`, with size/feather/flow/density
+  `0.09/0.65/1/1`.
+- Re-read the Computer Use skill, guidance, API, and confirmations policy. The
+  required `@oai/sky` initialization failed before UI input with
+  `Importing module "node:process" is not allowed in node_repl`; after the
+  required kernel reset, one retry failed identically. No UI action occurred.
+- Read-only runtime inspection initially found no Lightroom through CIM and no
+  sockets, but a catalog pre-copy guard correctly detected recorded PID
+  `221000` still alive; the copy command stopped before creating its destination.
+  Direct `Get-Process` then identified PID `221000` as Lightroom, start time
+  `2026-09-01 05:01:02`, matching the catalog lock. The intended destination
+  did not exist after the safe refusal.
+- With approved GUI launch scope, started the existing Lightroom executable
+  once with the isolated `catalog-recovery-copy-v2` path. The transient PID
+  handed back to PID `221000`; after a bounded wait it remained responding but
+  had no main window and no 58763/58764 listeners. The lock still names PID
+  `221000`, and the MCP log did not advance beyond the prior 02:48:45 shutdown.
+  No process, lock, catalog, photo, or source file was changed.
+- Prepared the non-source v4 plan at
+  `D:\photo\_agent_workspace\lightroom\verification\t62-brush-mask-live-20260901-dsc5349-v1\visible-v4\README.md`.
+  It uses a new Copy operation id, a new mask operation id, five normalized
+  body/head points, `+1.0 EV` Exposure only, and repeats created/readback,
+  normal-restart reconciliation, single-mask, render-locality, Master, RAW, and
+  XMP safety assertions. Live mutation remains blocked pending explicit
+  authorization to force-terminate the newly identified stuck PID `221000`;
+  the earlier authorization covered only PID `224616`.
+
+### Visible rerun continuation and Subject pivot
+
+- After the user explicitly authorized terminating PID `221000`, verified the
+  exact Lightroom process and used `taskkill /PID 221000 /T /F`; Windows also
+  ended child PIDs `243404` and `32132`. No catalog lock was deleted manually.
+  Preserved the prior catalog and made new non-overwriting copies. For the v4
+  copy, SQLite reported `quick_check ok`, `wal_checkpoint(FULL) 0|9|9`, and
+  `integrity_check ok`; source main/WAL hashes remained unchanged. Direct v4
+  launch then stalled as PID `271124` without a window or sockets. After exact
+  process-tree verification and user authorization, `taskkill /PID 271124 /T
+  /F` ended it and child PIDs `269764`, `194860`, and `274460`.
+- Preserved v4 and created `catalog-visible-copy-v5`, again excluding only the
+  stale lock during copy and completing `quick_check`, full WAL checkpoint, and
+  `integrity_check`; no photo files were involved. Explorer launch started
+  Lightroom PID `273276`; the isolated plug-in bound 58763/58764. Verified old
+  bridge PID `272120` pointed at the unrelated roadmap-integration worktree,
+  then ended only that exact Node process with user authorization so the T62
+  runner could own the sockets.
+- Delegated preflight regression before new code: targeted server suites passed
+  83 tests, full server passed 16 suites / 179 tests, check/lint/build passed,
+  HandlerMask passed 21/21, all 14 Lua specs passed 176/176, `luac -p` passed
+  35/35, and Selene reported 0/0/0. Official mise/Busted remained unavailable;
+  the recorded fallback runtime was Lua 5.4.6.
+- Created and rendered three fresh Brush candidates, each on its own Workflow
+  Copy with exact created/readback/global-preservation evidence: v4 Copy
+  `1012435` used Exposure `+1.0` and was rejected for a large bright background
+  halo; v5 Copy `1012472` used smaller dabs and Exposure `+0.7` but retained a
+  head/body halo; v6 Copy `1012509` used narrow dabs and Exposure `+0.75` but
+  produced obvious bright spots/bands on fur. Their isolated evidence READMEs
+  now mark them rejected. These agent rejections do not substitute for the
+  user's visual gate; they prevent known-bad candidates from reaching it.
+- Created fresh v7 Workflow Copy `1012546` (UUID
+  `27DD0583-2F3D-44AC-A4E3-FAD7DC8FDAB0`) and exported its baseline. A dense
+  Brush request file was generated but never executed. The user then directed
+  that the squirrel may use Select Subject, so v7 Brush was superseded and its
+  README states that the JSON is not mutation evidence.
+- Source safety remained exact after the rejected candidates: original
+  `E:\Lr\2026\2026-07-25\DSC_5349.NEF` is `19045888` bytes with SHA-256
+  `0DD6DAF48F5D3683A847F79C0D59226F600913D93BF6398008CF21BD1AD34A82`,
+  creation `2026-07-26 15:04:23`, modification `2026-07-25 15:57:08`, and no
+  adjacent `DSC_5349.xmp`.
+- Subject audit first reconfirmed the current contract's three independent
+  fail-closed gates: `HandlerMask` refuses non-Brush before checkpoint,
+  `MaskAdapter.buildCorrection` only builds Brush, and reconciliation only
+  accepts `Mask/Paint` geometry. A read-only attempt to address Adobe's built-in
+  `Adaptive Subject - Light` preset by UUID and exact name both returned
+  `Preset not found`; v7 was unchanged by those failed lookups.
+- Found the real SDK route instead of guessing opaque XMP:
+  `LrDevelopController.createNewMask("aiSelection", "subject")`, first supported
+  by SDK 11 and requiring an active Develop target. The installed Adobe
+  Adaptive Subject XMP confirms the discriminator `What=Mask/Image`,
+  `MaskSubType=1`, and `ErrorReason=0`. Subject work therefore moved to the T63
+  vertical slice: runtime capability probe, checkpoint, exact single-delta
+  readback, opaque-payload preservation, bounded failure, and restart
+  reconciliation. Sky remains unsupported.
+- Added server red/contract coverage for a kind-discriminated AI geometry
+  summary without fake Brush point/bounds. Targeted
+  `list-tools-handler.test.ts` plus `mask-integration.test.ts` passed 2 suites /
+  71 tests after the schema and Subject transport fixture change. Core Lua
+  Subject implementation and live runtime proof remain in progress; no Subject
+  success is claimed yet.
+
+## 2026-09-01 - T63 real Select Subject implementation and final live validation
+
+- Implemented the real Lightroom SDK Subject route with
+  `LrDevelopController.createNewMask("aiSelection", "subject")`. Capability is
+  exposed only when the controller, module-switch/readback, checkpoint, schema,
+  and apply APIs are present. Readback accepts only one exact checkpoint delta
+  with `What=Mask/Image`, `MaskSubType=1`, an absent-or-zero `ErrorReason`, and
+  at least one non-metadata opaque AI field. The adapter changes only the mask
+  name and requested local settings and verifies that Lightroom's opaque AI
+  payload is otherwise byte-for-byte structurally preserved. Sky remains
+  unsupported.
+- The first live Subject on fresh Workflow Copy `1012577`, UUID
+  `6922A826-5431-44DA-9446-97177FAE33C1`, initially exposed two real Lightroom
+  normalizations: successful Subject payloads can omit `ErrorReason`, and the
+  correction can contain the implicit zero field `LocalToningSaturation=0`.
+  Added fail-closed tests and accepted only absent/zero error state plus unknown
+  Subject `Local*` values that are exact numeric zero; a nonzero unknown local
+  field still refuses. The same operation then reconciled the unique partial
+  delta without a second AI call.
+- Final Subject identity is operation
+  `t63-live-subject-dsc5349-exposure-065ev-20260901-v8`, name
+  `T63 Squirrel Subject DSC 5349 +0.65 EV`, mask
+  `BCB6971E8137E043955637BF3B3CB0BC`, correction
+  `509A16116DB31848B940A244DFD15B9B`, and checkpoint
+  `A41BD5B1-EF2C-4A83-8F13-D5C6200E4B01`. Live readback reported Lightroom
+  `15.5.1`, ProcessVersion `15.4`, 10 opaque AI fields, exact Exposure `0.65`,
+  one mask added, prior tree/global Develop unchanged, and verified selection.
+- Independent review found four P2 retry/schema/restoration gaps. Added a
+  canonical request fingerprint to new Subject checkpoint names; a changed
+  request using the same operation is refused. A reused checkpoint with no
+  exact delta now always returns `REVIEW_REQUIRED` and never calls the Subject
+  controller again. Legacy checkpoints may reconcile an already complete
+  result but cannot patch an incomplete delta without a fingerprint. Module is
+  restored before selection, followed by final module, target-photo, selected
+  set, and active-source readback. The server success schema now has mutually
+  exclusive Brush and Subject branches that bind `mask_kind`,
+  `kind_parameters`, and geometry together; Sky cannot validate as success.
+- Final re-review found one cross-kind asymmetry: a Subject request-bound
+  checkpoint did not conflict with a later Brush using the same operation ID,
+  because the Brush lookup searched only the legacy exact name. Added a red
+  cross-kind regression and changed legacy Brush lookup to refuse any matching
+  `[request:...]` checkpoint as `REVIEW_REQUIRED` before checkpoint creation or
+  photo write. Documentation now states precisely that Subject checkpoints are
+  request-bound and cross-kind operation reuse is forbidden.
+- Added the corresponding retry mismatch, delayed-no-delta, post-module
+  selection/source, and cross-kind schema tests. Updated final delegated
+  regression passed server 16 suites / 184 tests, TypeScript check/lint/build,
+  all 14 Lua specs at 188/188 (HandlerMask 33/33), `luac -p` 35/35, Selene
+  0 errors/0 warnings/0 parse errors, and `git diff --check` with only known
+  LF-to-CRLF warnings.
+- Restart persistence used only non-overwriting generated catalog copies. After
+  normal close failed for isolated PID `278040`, explicit authorization ended
+  that exact process tree. SQLite quick/integrity checks passed and WAL
+  checkpoint reported `0|0|0` before copying to v9. The direct v9 launch
+  produced unique PID `270852` with no main window/listeners; a first force-end
+  request was correctly rejected until elevated read-only CIM and the catalog
+  lock proved its complete command line pointed only at
+  `catalog-visible-copy-v9-subject-restart`. After explicit approval, only that
+  process tree was ended. v10 was copied non-overwriting, reported quick/integrity
+  `ok`, and SHA-256
+  `1E2C5681E88B9EC8D9FFE28A92BF86DC49E43CA29D4A4ECACF3E34A83FB6F7F2`.
+  Explorer association launch produced PID `278132`; after bounded startup it
+  owned both 58763 and 58764 and its command line pointed at the v10 catalog.
+- The exact operation on v10 returned `result=reconciled`, not `created`, with
+  the same mask/correction/checkpoint/name/Exposure/AI geometry and preservation
+  fields. This proves full-restart persistence and no duplicate Subject. The
+  post-restart export is 1,845,885 bytes, SHA-256
+  `1DC6E30C793C0B52D5CB3DCF96CB9B24C32B1758164E4A27BB542BCD45A684D4`;
+  its decoded 2048x1365 RGB pixels are identical to the pre-restart after render
+  (the files differ only in export metadata).
+- Final render evidence lives under
+  `D:\photo\_agent_workspace\lightroom\verification\t62-brush-mask-live-20260901-dsc5349-v1\visible-v8-subject`.
+  Before is 1,825,434 bytes with SHA-256
+  `AEA5EEB0DB10C799831A58CBBE66433B5D92C673BEC0025F40D615A9BFFA3BEA`;
+  after is 1,845,885 bytes with SHA-256
+  `B246373DE7B7D6BCBEC61F91C8B9D18172649468A84D97BF2A48E203D0E59B75`.
+  Mechanical localization found the over-20 max-channel delta box at
+  `[319,535,1373,870]`, visually matching the squirrel silhouette. Top
+  background, right background, and foreground control regions each measured
+  zero pixel change. Agent inspection found a visible whole-squirrel lift and
+  no Brush halo/spots; user-owned render PASS remains pending.
+- Final live metadata showed both Copy `1012577` and Master `976316` at global
+  Exposure/Contrast/Highlights/Shadows/Vibrance `0/0/0/0/0` and WB
+  `As Shot/4850/31`. External source evidence again found
+  `E:\Lr\2026\2026-07-25\DSC_5349.NEF` at 19,045,888 bytes, creation
+  `2026-07-26 15:04:23`, modification `2026-07-25 15:57:08`, SHA-256
+  `0DD6DAF48F5D3683A847F79C0D59226F600913D93BF6398008CF21BD1AD34A82`,
+  and zero adjacent `DSC_5349.xmp` files. No source photo was moved, renamed,
+  deleted, or overwritten.
+- Operational failures retained: Computer Use initialization again stopped
+  before UI input because `@oai/sky` imports forbidden `node:process`; no
+  unsupported UI fallback was used. One server test from the worktree root
+  failed `ENOENT` because `package.json` is under `server`; corrected runs used
+  the server directory. One `rg` query had an unclosed-group regex and was
+  replaced by a literal search. The first sandboxed live runner failed `EPERM`
+  creating the user instance-lock directory; the approved retry ran outside the
+  sandbox. Its first call raced the response socket and returned `Lightroom
+  plugin not connected`; adding a bounded 1.5-second connection wait made the
+  exact retry succeed. None of these failures changed photos, mask count, Git
+  refs, or public state.
+- Updated root English/Chinese and server documentation plus the v8 evidence
+  README. No push, PR, issue, deployment, or configured-checkout mutation was
+  performed.
+
+### Final-code reload boundary
+
+- After the cross-kind fix, final delegated regression passed server 16 suites
+  / 184 tests, check/lint/build, all 14 Lua specs at 189/189 (HandlerMask
+  34/34), `luac -p` 35/35, Selene 0/0/0, and `git diff --check` with only the
+  known line-ending warnings.
+- Because v10 Lightroom had loaded before the final cross-kind-only production
+  change, attempted a fresh-code live reload using non-overwriting v11 and v12
+  catalog copies. v11 quick/integrity checks passed and its catalog SHA-256 was
+  `368CB03842F7531BA0996764377BCC977C9B52BDE099B498C302FD967DE203A3`.
+  PID `9372` was proven by full command line and lock to own only v11, but after
+  a bounded wait its library window disappeared and no 58763/58764 listeners
+  bound. Explicit authorization ended only that exact process tree.
+- v12 was copied only after v11 quick/integrity `ok` and WAL checkpoint
+  `0|0|0`; v12 quick/integrity also passed and its catalog SHA-256 is
+  `99C3833EDF005DF4C499C0EDD7D01D99F1B6F4DCF2FDBA1A912448051FA96F2C`.
+  PID `280800` full command line and lock point only to v12. After bounded wait
+  it exposed a Lightroom window titled `警告` rather than the catalog UI and
+  did not bind the MCP listeners. Computer Use could not inspect or act on the
+  dialog because `@oai/sky` still fails before any UI action; direct UIA was not
+  used as a workaround. The warning remains pending user inspection.
+- Therefore the core Subject creation/restart/no-duplicate/render evidence is
+  live-proven through v10. The final cross-kind-only refusal is proven by red-to-
+  green automated tests but is not yet live-loaded because v12 is stopped at a
+  Lightroom warning. It does not change the already persisted Subject or render
+  result, but this distinction must remain explicit until the warning is cleared
+  and the exact Subject operation reconciles once more.
+- A first read-only log-discovery PowerShell loop hit the known empty-pipe parser
+  error; the corrected assigned-array form found no applicable Lightroom log.
+  Sandbox access to `C:\Users\John\.config\lightroom-mcp` was denied during a
+  later read-only listing attempt. Neither failure changed application, catalog,
+  photo, or Git state.
+
+## 2026-09-01 - User-authorized mobile render review upload
+
+- The user explicitly authorized uploading the render evidence to Google cloud
+  for mobile inspection. Used the connected Google Drive workflow and created
+  the private My Drive folder `Lightroom 松鼠遮色片檢查 2026-09-01`, folder ID
+  `1GNBi7ONxTwi4hwQ_O4BuwixrbUcnh6pa`.
+- Uploaded only the two 2048x1365 JPEG derivatives: before as
+  `01_調整前_DSC_5349.jpg` (Drive ID
+  `1Dga-DBBvKVucM6KQ0reMUBU2l8GzO2mx`, 1,825,434 bytes) and after as
+  `02_主體遮色片後_Exposure+0.65EV_DSC_5349.jpg` (Drive ID
+  `1XfdsJ_7byfg8l-RrDn1AMNBGRMe1Z2Nt`, 1,845,885 bytes). No RAW, catalog,
+  source code, checkpoint, or unrelated photo was uploaded.
+- Google Drive folder readback verified both exact filenames, MIME type
+  `image/jpeg`, sizes, download availability, and `shared=false` /
+  `source_visibility_status=not_shared`. Sharing permissions were not changed;
+  the files remain private to the connected Drive account.
+- The user inspected the mobile pair and reported that the Subject result was
+  drastically over-brightened (`黑人都被你調成白人了`), but accepted it as
+  sufficient proof that the mask is genuinely active. Record the human gate as
+  **functional visibility PASS, aesthetic/render quality FAIL**. The user said
+  `算了`, so no further exposure adjustment was made. This render remains
+  diagnostic evidence only and must not be described as a publishable edit or
+  as a user `render PASS`.
+- The user then explicitly clarified `確認有生效` and finally
+  `沒關係算你pass`. This supersedes the pending human gate: record the T63
+  validation render as **user render PASS for mask-function acceptance**, with
+  the already documented over-bright aesthetic defect retained. The PASS
+  accepts the validation outcome; it does not reclassify the edit as a
+  publishable color grade.
+
+## 2026-09-02 - T63 local closeout after user render PASS
+
+- The user explicitly confirmed `render PASS` and asked to arrange the remaining
+  closeout, delegating bulk/repetitive work to subagents. Preserved the existing
+  distinction: the PASS proves that the Subject mask is visibly active; the
+  `+0.65 EV` diagnostic remains aesthetically over-bright and is not a
+  publishable grade.
+- A read-only delegated regression preserved the same ten-file T63/cross-kind
+  diff. Server check, lint, build, and full Jest passed at 16 suites / 184 tests.
+  The first Lua fallback invocation failed because the existing `luassert`
+  dependency path was not supplied; the corrected run reused the already
+  installed `lua-rocks-lightroom-roadmap` tree and passed HandlerMask 34/34,
+  all 14 Lua spec files 189/189, `luac -p` 35/35, and Selene 0 errors / 0
+  warnings / 0 parse errors. `git diff --check` exited 0 with only the known
+  LF-to-CRLF warnings. The delegate changed no files.
+- Updated the external `visible-v8-subject` evidence README with an explicit
+  gate matrix, the root T62/T63 verification README, and the PhotoAgent final
+  validation matrix. Updated the repository Chinese, English, and server
+  READMEs to record functional `render PASS` without converting the diagnostic
+  render into publishable visual acceptance. The preserved Brush v3 human
+  visibility FAIL remains unchanged.
+- Re-audited isolated v12 Lightroom PID `280800`. Ordinary CIM access was denied;
+  an approved elevated read-only retry proved the complete command line pointed
+  only at `catalog-visible-copy-v12-subject-final-code-retry`. It had no visible
+  window, no 58763/58764 listener, and no applicable catalog lock. After the
+  user approved exact-PID termination, `taskkill /PID 280800 /T /F` ended that
+  process and child PID `279452`; neither original catalog nor photo path was a
+  target.
+- With the isolated process absent, v12 SQLite `quick_check` and
+  `integrity_check` returned `ok`, and `wal_checkpoint(FULL)` returned `0|0|0`.
+  Copied it non-overwriting under the same verification root to
+  `catalog-visible-copy-v13-subject-final-code-pass`; v13 quick/integrity checks
+  also returned `ok`, no lock/WAL/SHM existed, and the catalog SHA-256 remained
+  `99C3833EDF005DF4C499C0EDD7D01D99F1B6F4DCF2FDBA1A912448051FA96F2C`.
+- The approved Explorer association launch produced Lightroom PID `356836`.
+  An approved elevated read-only CIM check proved its full command line pointed
+  only at the isolated v13 catalog, but it again remained headless: no window,
+  no catalog lock, no 58763/58764 listeners, and no new plug-in log entry. The
+  user approved exact-PID termination; `taskkill /PID 356836 /T /F` ended that
+  process and child PID `357144`. No repeated agent launch was attempted.
+- The core Subject create/readback/restart/no-duplicate/render evidence remains
+  live-proven through v10 and now has the user functional render PASS. The final
+  cross-kind refusal remains automated-only because Codex-launched v12/v13
+  could not reach an interactive Lightroom plug-in load. No unsafe cross-kind
+  mutation was sent merely to prove the guard. A final interactive live reload
+  can only proceed after the user launches the isolated v13 catalog in their
+  desktop session and 58763/58764 are observed.
+- No photo, RAW, XMP, original Lightroom catalog, configured checkout, Codex
+  configuration, push, PR, issue, or remote state was changed. Final post-doc
+  regression and the local commit remain pending below.
+
+### Cross-repository contract closeout and malformed-result recovery
+
+- An independent read-only review found three P2 contract gaps in the first
+  PhotoAgent bridge: no exact contract revision/safety-semantic handshake,
+  Brush readback geometry not bound to the requested path, and incomplete
+  `REVIEW_REQUIRED` evidence classification/transport preservation. No P1 was
+  found. The exact revision and safety handshake plus Brush geometry binding
+  were added first and verified by targeted tests.
+- Added a formal `create-mask.v2` revision to the MCP listing. Its output schema
+  now distinguishes Brush and Subject success geometry and includes a
+  schema-valid `validation_failure` recovery branch for malformed
+  post-operation plug-in results. That branch uses the validated request
+  operation ID, explicitly `unverified` capability and `not_attempted`
+  selection state, a maximum 16,384-character raw JSON excerpt, truncation
+  flag, full-payload SHA-256, and a maximum 2,048-character validator summary.
+  The malformed result is never exposed as success and never authorizes retry.
+- `server/src/tool-handler.ts` now validates typed plug-in output with the MCP
+  SDK's AJV provider before returning structured content. If `create_mask`
+  output is malformed, the handler validates its generated recovery envelope
+  against the same output schema before returning it. Other typed tools retain
+  their prior behavior.
+- Added/updated handler, list-tools, and real MCP/plug-in transport regressions.
+  The first v1 transport run correctly changed five formerly rejected malformed
+  cases into bounded error envelopes, so four old `rejects.toThrow` assertions
+  failed and were updated. A delegated full run then passed 185 Jest tests but
+  exposed one lint failure in `tool-handler.test.ts` from assigning
+  `JSON.parse` directly; the test now assigns to `unknown` first.
+- The first v2 targeted run failed two assertions that still expected
+  `capability` and `selection_restoration` in the top-level required list. The
+  v2 schema intentionally requires only `operation_id`/`result` at top level
+  and requires capability/selection in each success, unsupported, normal
+  review, and validation-failure branch. The assertions were corrected to
+  verify those branch requirements and the bounded failure schema. The next
+  targeted run passed server TypeScript check, lint, and 82/82 Jest tests.
+- A first `npx prettier --write` attempt in this repository failed with npm
+  cache `EACCES` because no local Prettier executable exists and npm attempted
+  registry/cache resolution. It changed no file and no dependency was
+  installed. Formatting is therefore covered by repository lint plus
+  `git diff --check` rather than an unapproved dependency install.
+- Final delegated full regression, final independent P1/P2 review, and local
+  commit are recorded below when complete. No Lightroom, photo, catalog,
+  remote, or Codex configuration state was changed by this contract work.
+
+### Final create-mask.v2 verification and review
+
+- Added a final schema regression that injects an otherwise complete success
+  payload carrying `validation_failure`. AJV must reject that mixed state and
+  the handler must normalize it to schema-valid `REVIEW_REQUIRED`. Brush
+  success, Subject success, unsupported, and normal review branches now all
+  explicitly exclude the recovery-only field where applicable.
+- Final delegated read-only regression on the latest v2 tree passed: server
+  TypeScript check, ESLint, build, full Jest 16 suites / 186 tests; HandlerMask
+  Lua fallback 34/34; all Lua fallback 14 files / 189 tests; Lua 5.4.6 syntax
+  35/35; Selene 0 errors / 0 warnings / 0 parse errors; and
+  `git diff --check` with only existing LF-to-CRLF warnings.
+- Final independent read-only review reported P1=0 and P2=0. It confirmed the
+  four result branches are mutually safe, the new mixed-success regression
+  exercises normalization, PhotoAgent receives `unparsed` bounded raw evidence
+  with `retry_allowed=false`, and the mask mutation is never blindly resent.
+- Automated implementation acceptance and the existing live Subject
+  create/readback/restart/no-duplicate/render evidence are complete for this
+  local diff. Live-loading the final v2 code through an interactive Lightroom
+  session, a live PhotoAgent-to-Lightroom v2 call, final cross-kind refusal, and
+  a general `reconcile_mask` endpoint remain explicit live/design boundaries.
+- A single local commit on `codex/t62-mask-creation` is recorded below. It is
+  not pushed; no PR, issue, remote state, Lightroom, photo, catalog, original
+  file, sidecar, preview, export, or Codex configuration was changed by final
+  verification.
+- Created one local commit with message
+  `feat: finish verified mask creation`, containing only the 13 reviewed
+  README/work-log/plugin/server/test files. The commit was not pushed and no
+  remote branch, PR, or issue state changed. Because this worktree's Git
+  metadata lives in the main checkout, the sandbox denied its index lock; the
+  user-approved `git add`/`git commit` path completed the local commit without
+  changing any non-Git project state.

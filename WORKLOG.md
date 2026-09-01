@@ -1524,3 +1524,18 @@ Unverified boundaries:
   Markdown check resolved every relative link and contents anchor in both
   READMEs. Targeted `git diff --check` passed with only expected LF-to-CRLF
   warnings.
+
+## 2026-09-01 - README publication to main
+
+- After reviewing the local result, the user explicitly authorized the push and
+  requested the approved README work be merged into `main`.
+- A fresh `git fetch --prune origin` succeeded. Preflight showed a clean review
+  worktree, `origin/main...HEAD = 0 1`, `origin/main` was an ancestor of HEAD,
+  and the complete diff remained limited to `README.md`, `README.en.md`, and
+  `WORKLOG.md`.
+- Normal non-force `git push origin HEAD:main` fast-forwarded
+  `John-owo/lightroom-mcp` from `bf967f1` to `9a619e8`. No PR, issue, release,
+  tag, force push, or unrelated remote state was changed.
+- Read-only `git ls-remote origin refs/heads/main` returned full SHA
+  `9a619e8a4d0fd72ee9f71e0ef2f1093c4709e125`, exactly matching the local
+  reviewed commit.

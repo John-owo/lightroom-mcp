@@ -19,6 +19,7 @@ const EXPECTED_TOOL_NAMES = [
   'create_virtual_copy',
   'reconcile_virtual_copy',
   'create_mask',
+  'reconcile_mask',
   'list_collections',
   'create_collection',
   'add_to_collection',
@@ -37,8 +38,8 @@ const EXPECTED_TOOL_NAMES = [
 ] as const;
 
 describe('TOOL_DEFINITIONS', () => {
-  it('contains exactly 21 tools', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(21);
+  it('contains exactly 22 tools', () => {
+    expect(TOOL_DEFINITIONS).toHaveLength(22);
   });
 
   it('tool names are unique', () => {

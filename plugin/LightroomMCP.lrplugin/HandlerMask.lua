@@ -222,7 +222,8 @@ local function checkpointFor(
     beforeSettings,
     operationId,
     operationIdentityPresent,
-    requestFingerprint
+    requestFingerprint,
+    readOnly
 )
     local legacyName = legacyCheckpointName(operationId)
     local name = checkpointName(operationId, requestFingerprint)
@@ -260,6 +261,9 @@ local function checkpointFor(
 
     local preset = matches[1]
     local reused = preset ~= nil
+    if readOnly and not preset then
+        return nil, nil, "Read-only reconciliation requires an existing exact checkpoint"
+    end
     if operationIdentityPresent and not preset then
         return nil, nil, "Operation identity already exists without a safe pre-write checkpoint"
     end
@@ -708,8 +712,16 @@ local function createSubjectMask(args, catalog, photo, context, capability)
             error("Develop settings changed before Subject mask creation", 0)
         end
 
+        -- Module switching and SDK reads can yield. Recheck the actual target
+        -- immediately before the controller action, which acts on UI selection.
+        if not expectedSelectionMatches(catalog, photo) then
+            error("Selection changed after entering Develop; Subject controller was not called", 0)
+        end
+
         mutationStarted = true
+        Log.info("Subject controller begin operation=" .. args.operation_id)
         LrDevelopController.createNewMask("aiSelection", "subject")
+        Log.info("Subject controller returned operation=" .. args.operation_id)
         local readback, completionError = completeSubjectDelta(
             catalog,
             photo,
@@ -777,6 +789,8 @@ local function createSubjectMask(args, catalog, photo, context, capability)
     end
 
     if not operationOk then
+        Log.info("Subject operation requires review operation=" .. args.operation_id
+            .. " reason=" .. tostring(operationResult):sub(1, 1024))
         return reviewResult(
             args.operation_id,
             context,
@@ -811,7 +825,7 @@ local function createSubjectMask(args, catalog, photo, context, capability)
     )
 end
 
-function MaskHandler.createMask(args)
+local function requestContext(args)
     MaskAdapter.validateArguments(args)
 
     local catalog = LrApplication.activeCatalog()
@@ -840,6 +854,51 @@ function MaskHandler.createMask(args)
             and type(LrApplicationView.getCurrentModuleName) == "function"
             and type(LrApplicationView.switchToModule) == "function"
     )
+    return catalog, photo, context, capability
+end
+
+-- This entry never calls any creation, patch, selection, module or write helper.
+-- An incomplete prior result remains review-required; it is not completed here.
+function MaskHandler.reconcileMask(args)
+    local _, _, context, capability = requestContext(args)
+    local restoration = selectionStatus("not_needed", true)
+    if args.mask_kind == "sky" or not capability.kinds[args.mask_kind].supported then
+        return unsupportedResult(args.operation_id, capability,
+            capability.kinds[args.mask_kind].reason or "Mask readback is unavailable")
+    end
+    local ids = MaskAdapter.identities(args)
+    local fingerprint = args.mask_kind == "subject" and MaskAdapter.requestFingerprint(args) or nil
+    local checkpoint, beforeSettings, checkpointError = checkpointFor(
+        context.settings, args.operation_id, false, fingerprint, true
+    )
+    if not checkpoint then
+        return reviewResult(args.operation_id, context, capability, nil, restoration, checkpointError)
+    end
+    local readback, reason
+    if args.mask_kind == "subject" then
+        readback, reason = MaskAdapter.reconcileSubject(
+            beforeSettings, context.settings, args, capability.lightroom_version
+        )
+    elseif MaskAdapter.hasOperationIdentity(beforeSettings, ids) then
+        reason = "Checkpoint already contains this operation identity; refusing to guess its ownership"
+    else
+        readback, reason = MaskAdapter.reconcile(
+            beforeSettings, context.settings, args, ids, capability.lightroom_version
+        )
+    end
+    if not readback then
+        reason = tostring(reason) .. "; checkpoint_equal="
+            .. tostring(MaskAdapter.deepEqual(beforeSettings, context.settings))
+            .. "; current_mask_tree_type=" .. type(context.settings.MaskGroupBasedCorrections)
+            .. "; checkpoint_mask_tree_type=" .. type(beforeSettings.MaskGroupBasedCorrections)
+        return reviewResult(args.operation_id, context, capability, checkpoint, restoration, reason)
+    end
+    return successResult(args.operation_id, "reconciled", context, capability,
+        checkpoint, restoration, readback)
+end
+
+function MaskHandler.createMask(args)
+    local catalog, photo, context, capability = requestContext(args)
 
     if args.mask_kind == "sky" then
         return unsupportedResult(

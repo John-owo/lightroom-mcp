@@ -12,6 +12,7 @@ import { parseCli, helpText } from "./cli.js";
 import { VERSION } from "./version.js";
 import { startHeartbeat } from "./heartbeat.js";
 import { acquireInstanceLock } from "./instance-lock.js";
+import { ACTION_TIMEOUTS_MS, REQUEST_TIMEOUT_MS } from "./request-timeouts.js";
 import {
   ensurePluginInstalled,
   findBundledPlugin,
@@ -19,20 +20,10 @@ import {
   lightroomModulesDir,
 } from "./install-plugin.js";
 
-const REQUEST_TIMEOUT_MS = 30_000;
-// Batch export/import render files and can run for minutes; the default
-// timeout would report a spurious failure mid-export. See issue #128.
-const LONG_RUNNING_TIMEOUT_MS = 300_000;
 // Keep this interval in sync with HEARTBEAT_INTERVAL_SECONDS in
 // PluginInfoProvider.lua. See heartbeat.ts for what this drives.
 const HEARTBEAT_INTERVAL_MS = 30_000;
-const PING_TIMEOUT_MS = 10_000;
 const RESPONSE_CONNECT_SETTLE_MS = 200;
-const ACTION_TIMEOUTS_MS: Record<string, number> = {
-  export_photos: LONG_RUNNING_TIMEOUT_MS,
-  import_photos: LONG_RUNNING_TIMEOUT_MS,
-  ping: PING_TIMEOUT_MS,
-};
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 

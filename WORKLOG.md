@@ -1,5 +1,19 @@
 # lightroom-mcp work log
 
+## 目前狀態入口（2026-09-05 文件核對）
+
+先讀既有 [final validation matrix](D:/photo/_agent_workspace/lightroom/handoffs/photo-agent-t09-t58-t60-final-validation-matrix-20260901-v1.md) 的「目前狀態」區塊，
+再按任務查本檔相關歷史。適用 checkout：`D:/photo/_agent_workspace/git-worktrees/lightroom-mcp-t62`；
+分支 `codex/t62-mask-creation`；程式 HEAD `3b28e33f5c79b5af940efc632f66fdad03a992b8`；package `0.10.0`。
+這次只整理文件，不代表測試或 Lightroom 重新驗收。修改後工作樹含文件變更。
+若交接檔不可用，只使用本段身分資訊並查本 checkout 的相關歷史，不反覆追讀失效連結。
+
+---
+
+
+Historical logging preamble (superseded by current AGENTS.md and the short state source above).
+The following original wording is retained as history, not the current reading order.
+
 Every agent reads this file after `CLAUDE.md`. Keep entries factual and use the
 named files as the starting point instead of scanning the whole repository.
 
@@ -2258,3 +2272,345 @@ Unverified boundaries:
   metadata lives in the main checkout, the sandbox denied its index lock; the
   user-approved `git add`/`git commit` path completed the local commit without
   changing any non-Git project state.
+
+## 2026-09-02 - Interactive final-v2 reload attempt opened the wrong isolated catalog
+
+- The user reported Lightroom open and supplied a Plug-in Manager screenshot.
+  It showed one disabled duplicate entry plus one running Lightroom MCP entry,
+  request port 58763 and response port 58764 bound, with zero processed
+  requests at capture time.
+- Read-only runtime checks found Lightroom PID `364580` listening on both ports.
+  Exact elevated CIM inspection showed a separate Node PID `320888` connected
+  to those ports from the older
+  `lightroom-mcp-roadmap-integration\server\dist\index.js`, not the final T62
+  v2 server. With user approval, only that exact Node process tree was ended;
+  Lightroom remained running.
+- The current catalog command line did not expose a path, so catalog locks were
+  checked before any mask request. The active 01:10:25 lock was under
+  `catalog-visible-copy-v11-subject-final-code`; v13 had no lock. This proved
+  the user session was on the isolated v11 catalog, not the requested isolated
+  v13 catalog. It was not an original/user production catalog.
+- The first final-server metadata script failed before connection with sandbox
+  `EPERM` while accessing the existing MCP token directory. The approved retry
+  launched the final T62 server and connected successfully. Read-only metadata
+  then reported `Photo not found: 1012577`; Master `976316` existed but listed
+  only Copy `1012348` and clean Brush Copy `1012398`. Therefore v11 does not
+  contain the T63 Subject Copy required for same-operation reconciliation.
+- Stopped before `create_mask`: no Subject call, cross-kind call, mutation,
+  export, Master edit, original photo, sidecar, or remote operation occurred.
+  The next safe step is for the user to open
+  `catalog-visible-copy-v13-subject-final-code-pass\Lightroom Catalog-v13-5.lrcat`,
+  restart the plug-in server there, and report it open. Final v2 live reconcile
+  and PhotoAgent-to-MCP E2E remain pending until that exact catalog lock and
+  Copy `1012577` are observed.
+
+### Short-path v13 recovery copy after Lightroom path-limit warning
+
+- The user's screenshot did not report catalog corruption. Lightroom stated
+  that the original v13 preview-cache path would exceed its 174-character
+  platform limit. Measured source lengths confirmed the catalog path was 167
+  characters while the generated `Previews.lrdata` path was 177 characters.
+- Rechecked the unopened source v13 catalog before copying: no source lock,
+  WAL, or SHM was present; SHA-256 remained
+  `99C3833EDF005DF4C499C0EDD7D01D99F1B6F4DCF2FDBA1A912448051FA96F2C`;
+  SQLite `quick_check` and `integrity_check` both returned `ok`.
+- Created a non-overwriting short-path bundle at
+  `D:\photo\_agent_workspace\lightroom\v13-final`. The catalog and all matching
+  `.lrcat-data`, Helper, Previews, and Sync bundles were copied and renamed to
+  the `T63-v13` base. The source bundle was not moved, renamed, or changed.
+- Destination catalog path length is 59 and preview-cache path length is 69.
+  Source/destination file counts, byte totals, and SHA-256 hash multisets match
+  for every bundle component: catalog 1 / 5,017,600; `.lrcat-data` 20 /
+  116,535,212; Helper 6 / 651,808; Previews 98 / 34,280,181; Sync 7 /
+  7,839,560. Destination SQLite quick/integrity checks returned `ok`, catalog
+  SHA-256 matches the source, and no destination lock/WAL/SHM existed.
+- Added `v13-final\README.md` with provenance, mapping, exact checks, and the
+  new open path. Lightroom import/open validation remains pending until the
+  user opens `v13-final\T63-v13.lrcat`; no mask or photo mutation occurred.
+
+#### Hidden-sidecar inventory correction and full-bundle verification
+
+- The first post-copy inventory omitted hidden files because it did not use
+  PowerShell `-Force`. That verification output undercounted the bundle; the
+  copy itself was complete and already contained every hidden sidecar.
+- Two complete source snapshots taken three seconds apart were stable at 140
+  files, 81 directories, and 165,581,902 bytes, with identical lengths and
+  last-write timestamps. Full `-Force` source/destination counts, bytes, and
+  SHA-256 hash multisets matched: catalog 1 / 5,017,600; `.lrcat-data` 22 /
+  117,678,468; Helper 8 / 689,903; Previews 100 / 34,318,276; Sync 9 /
+  7,877,655. The destination has one additional file only: its README.
+- No top-level main-catalog lock, WAL, or SHM existed. Eight internal
+  Helper/Sync WAL and SHM files were intentionally preserved and hash-matched:
+  `helper.db-shm`, `helper.db-wal`, `metadatahelper.db-shm`,
+  `metadatahelper.db-wal`, `Managed Catalog.mcat-shm`,
+  `Managed Catalog.mcat-wal`, `Managed Catalog.wfindex-shm`, and
+  `Managed Catalog.wfindex-wal`.
+- Main catalog SHA-256 still matched the source and its `quick_check` and
+  `integrity_check` remained `ok`. The same two checks also passed for
+  `metadatahelper.db`, `previews.db`, `root-pixels.db`, `sourcesync.db`, and
+  `Managed Catalog.mcat`. Generic SQLite could not check `helper.db` because
+  Lightroom's `asciilrstr` tokenizer was unavailable, or
+  `Managed Catalog.wfindex` because Lightroom's `i18n_collate` collation was
+  unavailable; neither extension error is evidence of database corruption.
+- The first internal-database PowerShell command failed at parse time with
+  `An empty pipe element is not allowed.` and changed nothing. The corrected
+  command assigned the loop output before piping it to JSON and produced the
+  database results above.
+
+### 2026-09-02 - DSC_6862 live mask and close-loop verification
+
+- Verification target was the unique source
+  `D:\photo\2026\2026.8.19擎天崗銀河+流星雨\raw\DCIM\125NZ5_2\DSC_6862.NEF`.
+  Read-only `Get-FileHash -Algorithm SHA256` measured
+  `5B2E47C15E54682AF0A98C9491D6773E36138D410061D8CB4B9B9D8BE1E8A3A5`,
+  18,110,976 bytes, last write `2026-08-18 23:42:37 +08:00`; adjacent
+  `DSC_6862.*` sidecar count was 0.
+- Read-only catalog search found Master `1000386`, UUID
+  `DA59BADD-1F06-4CE2-9CBF-A2A536AFD7A6`. The configured workspace server still
+  points to the older roadmap-integration tree, so this audit invoked the T62
+  server directly; `D:\photo\.codex\config.toml` was not changed.
+- The initial stale-bridge-lock PowerShell handling command had a parser error
+  caused by a variable-colon expression and changed nothing. After confirming
+  bridge lock PID `356896` was not running, the exact lock
+  `C:\Users\John\.config\lightroom-mcp\bridge-58763-58764.lock` was moved
+  recoverably to
+  `D:\photo\_agent_workspace\lightroom\verification\close-loop-6862-20260902-v1\stale-bridge-58763-58764.lock-20260902`.
+  It was not deleted and no catalog/photo lock was touched.
+- T62 transport `list-tools` and raw TCP `ping`/`search_photos` probes reached
+  Lightroom. The raw TCP metadata probe hit a response-rebind race and failed
+  to obtain a stable metadata response; it changed no state. Formal
+  `tests\\e2e\\mcp-runner.mjs` calls were used for all subsequent evidence.
+- T62 automated verification passed: `npm.cmd run check`, `npm.cmd run lint`,
+  `npm.cmd run build`, and `npm.cmd test -- --runInBand` (16 suites / 186
+  tests). Prepared Lua 5.4.6 fallback passed HandlerMask 34/34 and 15 spec
+  files / 189 tests; `luac.exe -p` parsed 35/35 files. The Selene mise shim
+  first failed because `mise` was unavailable; the installed Selene executable
+  then passed with 0 errors / 0 warnings / 0 parse errors.
+- Created non-overwriting Workflow Copy `1012640`, UUID
+  `21B6FA62-EFBB-4A44-AAC6-133203C3AD48`, and exported a baseline JPEG. The
+  direct T62 `create_mask` call used operation
+  `verify-6862-mask-brush-v2-20260902`, Brush path `(0.5,0.32) ->
+  (0.5,0.40) -> (0.5,0.48)`, and local Exposure `+0.35 EV`. Lightroom raw
+  evidence reported `result=created`, checkpoint recovery evidence, exact
+  one-mask delta, unchanged global Develop/source/sidecar, and restored
+  selection. The MCP server normalized the call to `REVIEW_REQUIRED` because
+  `server/src/tool-contracts.ts:326-330` requires capability
+  `accepted_parameters` and `readback_guarantees` arrays, while the plugin
+  legitimately returned empty objects for AI/unsupported kinds. No retry was
+  sent. Checkpoint `4F444222-6B7D-4483-9950-D7CB55378881`, mask
+  `e21ccc38-0db8-1998-0711-0000fb94288c`, correction
+  `165e3a14-66ae-02c0-fb4c-0000f8347cc8`.
+- Formal `get_photo_metadata` readback after the mask preserved the Master
+  global settings (`exposure=0`, `contrast=12`, `highlights=-25`,
+  `shadows=8`, `whites=10`, `blacks=-10`, `temperature=4300`, `tint=14`).
+  Baseline/after render hashes were
+  `EE481CF029F191C9BFCBA17406461518338D501BA041C1693626E5B78C812783` and
+  `F5B01599D6C617580BCC0A493899A62D6BB99B2365B219C09E0F6273A64B0BC9`;
+  pixel comparison MAE `0.6183`, max delta `89`, changed bbox
+  `(460,176)-(538,357)`, proving a localized live render effect.
+- Created a second non-overwriting Workflow Copy `1012679`, UUID
+  `5630F464-44FA-42E4-B861-11FDE14E34AB`, for the PhotoAgent bridge. Its live
+  operation `verify-6862-photoagent-live-brush-v2-20260902` returned
+  `REVIEW_REQUIRED`, `retry_allowed=false`, `evidence_status=unparsed`; the
+  bounded raw response still reported Lightroom `result=created`, restored
+  selection, and all preservation fields true. PhotoAgent issued no second
+  mutation. The after-mask export hash was
+  `5CE0BC18E9F407D792E653E068B98A536ECDF2404371C2E7D5FADEAF60A9EF08`;
+  comparison against baseline gave MAE `0.4373`, max delta `66`, changed bbox
+  `(448,177)-(552,384)`.
+- Final readback of Master and both Copies confirmed correct UUID/master
+  identity and unchanged global Develop values; Master reported two
+  verification Copies. The source hash remained unchanged. Evidence and
+  rendered files are under
+  `D:\photo\_agent_workspace\lightroom\verification\close-loop-6862-20260902-v1\`,
+  with the summary in `README.md`. The diagnostic positive Exposure values are
+  not a publishable grade, and human visual acceptance remains pending.
+
+## 2026-09-05 - Approved rules and documentation optimization
+
+- User approved the prior audit and requested real Git regular-file entries, mandatory
+  Workflow Copy/Master/REVIEW_REQUIRED/Checkpoint safety, short status-first reading,
+  exact-checkout evidence, and fresh Codex-start validation. Scope is documents only.
+- Preserved all pre-existing changes; exact originals and index/status evidence are
+  in D:/photo/_agent_workspace/reviews/rules-optimization-20260905/before and baseline.json.
+- AGENTS is the project authority; Lightroom CLAUDE entries are one-way pointers.
+  The four active Lightroom AGENTS index entries were converted 120000 -> 100644.
+  No commit, push, merge, photo operation, runtime/configuration change occurred.
+- Reused existing handoff/final-validation documents; otherwise added a short index
+  to the existing WORKLOG. History remains scoped to its worktree/commit and date.
+- Preflight: targeted PowerShell reads, Git status/log/ls-files, package/TOML readback,
+  CP932 round-trip diagnostics, codex exec --help and official AGENTS discovery docs.
+  Initial combined read output was truncated; relevant sections were re-read in
+  bounded commands. No runtime checks were inferred from historical logs.
+- apply_rules.py: exact-original backups; local CP932 inline-path repair in the old
+  Lightroom WORKLOG and removal of one NUL in the original site WORKLOG only.
+  Repair offsets/bytes are in baseline.json; unknown filename characters were not guessed.
+- Static and fresh-process verification: pending subsequent records.
+
+### Rules optimization verification - 2026-09-05
+
+- `python -B .../verify_rules.py`: PASS for 54 documents, nine project checkouts,
+  four regular-file Git index entries, relative entry links, UTF-8/no NUL, scoped
+  staged/unstaged `git diff --check`, retained architecture and 95 protected files.
+  No unrelated index entries, original code/assets or either Codex config changed.
+- Review added read-once guidance, existing WORKLOG fallback for unavailable local
+  handoffs, and an explicit ADR 0005/0006 planned-version/current-package mismatch.
+- `python -B .../probe_codex.py`: attempted a new `codex exec --ephemeral
+  --sandbox read-only --json` process at all nine project roots. MCP node_repl and
+  Lightroom were disabled only via per-process test arguments to avoid launching
+  a backend; no saved execution setting changed. All nine stopped before model
+  execution with `Error loading config.toml: invalid transport` in
+  `mcp_servers.lightroom`. No tool or Lightroom operation ran in those probes.
+- Fresh CLI instruction loading remains UNVERIFIED; Desktop restart/new-task
+  instruction loading was NOT TESTED. The static pass is not either live result.
+  Config diagnosis/repair is outside this approved documentation scope.
+- Verification records, byte-exact backups, original index/status and encoding
+  repair offsets: D:/photo/_agent_workspace/reviews/rules-optimization-20260905/.
+- The four Lightroom AGENTS changes are staged solely to persist mode 100644
+  in the index. HEAD remains unchanged: no commit, push, merge or deployment.
+
+### Final preservation check - 2026-09-05
+
+- Exact commands: `C:/Users/John/miniconda3/python.exe -B D:/photo/_agent_workspace/reviews/rules-optimization-20260905/apply_rules.py`, followed by `C:/Users/John/miniconda3/python.exe -B D:/photo/_agent_workspace/reviews/rules-optimization-20260905/verify_rules.py`; initial static check PASS.
+- Fresh-process command: `C:/Users/John/miniconda3/python.exe -B D:/photo/_agent_workspace/reviews/rules-optimization-20260905/probe_codex.py`. Nine new CLI processes stopped at config parsing; instruction loading remains UNVERIFIED, not PASS.
+- Review correction command: `C:/Users/John/miniconda3/python.exe -B D:/photo/_agent_workspace/reviews/rules-optimization-20260905/finalize_rules.py`.
+- The next static check correctly failed because the review note had also altered the old, protected untracked docs/agents/domain.md. A first guarded restoration stopped at a newline assertion without writing. A corrected restoration selected only the byte sequence matching that file's original SHA-256; the original is now byte-identical. Version-mismatch notes remain only in the two newly integrated copies. No pre-existing domain guidance was discarded.
+- Repeated exact verify_rules.py command: PASS, 54 documents / 9 checkouts / 4 regular Git index entries / 95 protected hashes, zero errors. Added explicit unavailable-handoff fallback and historical labels before final verification.
+- Fresh CLI loading and Desktop new-task/restart loading remain unverified. No code tests/builds, runtime/configuration changes, photo edits, commits or external writes occurred.
+
+
+### Fresh Codex instruction verification - 2026-09-05
+
+- User authorized the verification-script correction, audit records and necessary
+  CLI temporary files after a read-only diagnosis. No saved configuration changed.
+- Exact command: `C:/Users/John/miniconda3/python.exe -B D:/photo/_agent_workspace/reviews/rules-optimization-20260905/probe_codex.py`.
+- This checkout: `codex/t62-mask-creation` / `3b28e33f5c79b5af940efc632f66fdad03a992b8`.
+  CLI: `codex-cli 0.153.4`. Entry SHA-256: `511a7e48bcf8a3d4463af073ceba95639e33c1d913898ca4c144a66e9de10694`.
+- PASS: a fresh `codex debug prompt-input` process at this project root included
+  the complete current AGENTS.md in the actual model-visible user instructions,
+  including verified Workflow Copy, Master protection, REVIEW_REQUIRED,
+  Checkpoint-not-undo, short-state-first and read-only logging restrictions.
+- Evidence: [lightroom-mcp-t62 fresh process](D:/photo/_agent_workspace/reviews/rules-optimization-20260905/fresh-start-20260905T070104594581Z/lightroom-mcp-t62.json).
+  The full audit covered nine project roots, D:/photo and three nested directories
+  (13/13 PASS). No model was called and no MCP backend was connected.
+- Child-only CODEX_HOME selected C:/Users/John/.codex; child-only MCP disabled
+  flags were retained. The old sandbox-home probes had created incomplete MCP
+  definitions and stopped at `invalid transport`; those failures remain historical.
+- This proves fresh CLI rule discovery, not a Desktop GUI restart, Lightroom
+  execution, visual acceptance or deployment. Desktop GUI restart was not performed.
+- Final preservation/static command: `C:/Users/John/miniconda3/python.exe -B D:/photo/_agent_workspace/reviews/rules-optimization-20260905/verify_rules.py`; the current audit result is
+  [static-verification.json](D:/photo/_agent_workspace/reviews/rules-optimization-20260905/static-verification.json).
+
+
+## 2026-09-05 - Validation-first mask capability wire fix
+
+- User authorized verification of existing work and fixes blocking acceptance, while deferring existing-mask adjustment development. T14 live gate remains pending; this is independent local repair of the known T62/T63 return-format defect.
+- codex/t62-mask-creation / 3b28e33f5c79b5af940efc632f66fdad03a992b8 retained. Existing staged AGENTS file type and dirty CLAUDE/WORKLOG preserved; no runtime/plugin load, config, process termination, photo mutation, remote write or new feature.
+- Reproduced mask capability empty arrays serializing as objects. Added explicit JSON.array() marker and used it only in empty MaskAdapter capability lists. Ordinary empty maps remain objects. TypeScript response contracts were not relaxed.
+- Two new JSON/wire-format regressions failed before the fix and passed afterward. Focused JSON + HandlerMask: 39/39 PASS. Initial Lua launch failed to resolve luassert until using the existing local LUA_PATH. A shared-process aggregate returned 158 PASS / 33 FAIL due to a leaked JSON test stub from PluginInfoProvider; retained as a harness limitation. Established isolated per-spec processes: 14 specs / 191 PASS / 0 FAIL. luac -p: 35/35; Selene: 0 errors/warnings/parse errors. Native Busted/hosted CI not run.
+- In server, npm.cmd run check; npm.cmd run lint; npm.cmd test -- --runInBand; npm.cmd run build: PASS, 16 suites / 186 tests. Scoped git diff --check PASS, existing newline notices only.
+- Current live MCP is roadmap-integration PID 47112, not this T62 build. Read-only metadata confirms existing DSC_6862 Copies 1012640 and 1012679 with original UUID/Master relationships; mask-operation/checkpoint reconciliation and current plugin build identity remain unavailable through the exposed tools. Never resend old operations to clear unknown results. Sky remains unsupported.
+- Full evidence, exact commands and next live gates: [validation-first evidence](D:/photo/_agent_workspace/lightroom/verification/validation-first-20260905T155654/README.md). Fixed plugin was not loaded into Lightroom; no new live or human PASS.
+
+### 2026-09-05 — validation-first T62 read-only reconciliation blocker repair
+
+- Scope: after user accepted the exact T14 cf2eb133 functional render request with verbatim `可`, continued to T62/T63. Existing uncertain DSC_6862 operations must be reconciled without replaying create_mask: Subject's old combined route can complete a partial AI delta. Added reconcile_mask.v1 with the same strict original-request input and a narrower output that rejects `created`. Its Lua entry only reads exact Copy/Master identity, checkpoint and complete mask/Develop evidence. Missing/conflicting checkpoint, partial Subject or changed request stays REVIEW_REQUIRED; no creation, patch, selection/module change or write gate is called. Sky stays unsupported. This is recovery verification, not existing-mask adjustment.
+- Added readonly repeated-reconciliation, missing checkpoint, incomplete Subject, altered Brush request, Master/UUID rejection and Sky no-side-effect tests. Actual SDK transport tests verify read-only/exclusive semantics and reject malformed or `created` plugin results while preserving bounded raw evidence. Existing array-format fix and preexisting staged/unstaged files retained.
+- Evidence path: D:/photo/_agent_workspace/lightroom/verification/validation-first-20260905T155654. t62-readonly-resume.md records pending live steps and the original PhotoAgent request; the other Copy's complete original request remains to be recovered, not guessed.
+- Red/repair record: initial new Lua tests failed without the endpoint. An incomplete-Subject fixture wrongly expected an after-controller fault to return REVIEW_REQUIRED, although existing creation reconciles that case; corrected the fixture to an actually unpatched Subject delta. Scoped HandlerMask passed 43/43. Initial root-level npm check failed ENOENT (no package.json); reran only from server. Scoped SDK/list tools tests passed 78/78. Full Jest then exposed the second old 21-tool count in server.test.ts; updated to 22 and asserted reconcile_mask listing.
+- Final server commands (cwd server): npm.cmd run check; npm.cmd run lint; npm.cmd test -- --runInBand; npm.cmd run build. All PASS, 16 suites / 188 tests. No generators were run for documentation.
+- Final Lua: existing lua-spec-runner.lua with installed luassert LUA_PATH, one isolated process per plugin/spec/*_spec.lua: 14 specs / 199 tests PASS. luac.exe -p: 35/35. Selene plugin/LightroomMCP.lrplugin: zero errors/warnings/parse errors. The earlier overly broad `selene plugin` invocation incorrectly linted Busted specs under production globals (1031 errors, 9 warnings); corrected to the repository .mise.toml lua:lint scope, without relaxing lint rules. Summary saved in t62-reconcile-lua-checks.txt. Native Busted/hosted CI not run.
+- Scoped git diff --check PASS (existing LF/CRLF notices only). Exact source/build hashes recorded separately. No push, merge, issue changes, saved configuration switch, plugin reload or Lightroom mutation this continuation. Fixed-version live gate remains pending manual reload of the existing T62 plugin; requested from user because native UI control is unavailable and the previous Codex stdio transport is closed. This local evidence does not establish loaded Lua revision or mask render acceptance.
+### 2026-09-05 — reloaded T62 live reconciliation, Brush success, Subject blocked
+
+- User reported `已重載` for the existing T62 plugin. Current configured bridge lock owner was PID 88420, exact roadmap-integration dist/index.js; Codex tool still returned Transport closed. Initial non-escalated lock/CIM reads were access-denied (the printed absent line was NOT evidence). Escalated read verified owner; exclusively stopped that exact closed-transport Node bridge and preserved its non-photo lock. No Lightroom process/catalog lock/config changes. All temporary clients closed and preserved their exited-child locks before clearing only those dead bridge locks.
+- Recovered the direct DSC_6862 full original request and failed response from the named prior rollout's command item (initial wrong payload nesting extraction retained separately). Both old Copies 1012640 and 1012679 then reconciled twice read-only using original full requests and checkpoints. Original mask/Correction SyncIDs had been rewritten by Lightroom persistence. First harness correctly stopped on historical-ID mismatch; verified existing MaskAdapter complete unique checkpoint-delta/exact-payload matching and recorded old/new identity maps, then reran only readonly calls in a new evidence directory. All identity, exact checkpoint, settings and preservation checks passed; no original create request was resent. Source/sidecar hashes and metadata/selection snapshots unchanged.
+- Fresh Brush via real PhotoAgent executeMaskCreation: Copy 1012794 / E093ADC3-F3FA-4183-A58B-C291DFBBF473, operation validation-20260905-brush-mask-v1, +0.25 EV. CREATED / validated / retry_allowed=false. One Copy and one create_mask call. Checkpoint F63D2941-6FB7-4AB8-A17A-98836CD8AB3A. Two immediate readonly reconciliations plus two on a separate bridge connection passed. Before/after JPEGs visibly show local brightening; MAE 0.55579, max delta 70, 1.55917% pixels above delta10, bbox (946,390)-(1100,756) in 2048x1365. Functional effect only; visible spots are not a publishable grade. Human render PASS and full Lightroom/catalog reopen remain pending. This live create ran on the 188-test build before the later timeout-only server change.
+- Fresh Subject: Copy 1012830 / 9B31D730-42F3-473B-98A8-25F5C97517FD, operation validation-20260905-subject-mask-v1. Initial harness compared all selected-photo metadata and mistook the selected Master's expected copy-list growth for selection drift; stopped with zero mask calls. Corrected selection check to persistent selected identities, reconciled the same saved Copy and matched its original Master state, then resumed the never-called mask operation. No duplicate Copy.
+- The one Subject AI call timed out at server 30s. Plugin log shows create_mask at 20:59:20, then queued metadata processed 20:59:56. PhotoAgent correctly returned REVIEW_REQUIRED with no retry. Repeated readonly reconcile reports MaskGroupBasedCorrections unavailable/unrecognized. Request-bound checkpoint 42415F6F-4FB4-48A3-B4EE-E1029A932D4B exists, but get_develop_preset rejects its nested values; retained this separate unresolved read-export limitation. Diagnostic render has no visible Subject lift (MAE 0.11034, max delta8, zero pixels >10). No further Develop/mask writes. Await user's mask-panel / AI-error state; do not complete or recreate unknown operation.
+- Repaired independent diagnostic deadline defect: extracted production request-timeouts.ts, keeping existing ordinary/export/import/ping deadlines and assigning create_mask a bounded 50s (below default SDK 60s). Two real Dispatcher/fake-clock tests cover delivery of a 36s REVIEW diagnostic and bounded timeout without resending. This is not a fix or acceptance claim for missing Subject creation. No fresh mutation rerun under this timeout fix.
+- Final commands (server cwd): npm.cmd run check; npm.cmd run lint; npm.cmd test -- --runInBand; npm.cmd run build. PASS: 16 suites / 190 tests. Lua unchanged from 199-test version. Scoped diff --check PASS. No cloud, existing-mask adjustment, push/merge/issue closure/deploy. PhotoAgent source unchanged this continuation.
+- Final independent readonly diagnosis (new 190-test server): Subject remains REVIEW_REQUIRED; Sky reconcile returns unsupported; Master/Copy returned state, source hash and selection unchanged. Diagnostic-only exports use new empty destinations. A checkpoint read failure is recorded, not suppressed as success. Pixel measurement initially failed Windows ESM import/path resolution; resolved sharp through createRequire anchored at PA package.json. No image generation/editing or original-image overwrite.
+- Evidence entry: D:/photo/_agent_workspace/lightroom/verification/validation-first-20260905T155654/README.md. Scripts: reconcile-t62-readonly.mjs; run-t62-fresh-mask.mjs brush --execute; run-t62-fresh-mask.mjs subject --execute (pre-mask harness stop); run-t62-fresh-mask.mjs subject --execute --resume-subject (one AI timeout); recover-fresh-masks.mjs; read-subject-status.mjs; measure-mask-render.mjs [subject]. Each execution retained separate evidence and any failures. Creation runners are single-use, not recovery commands. Current source/build fingerprint recorded in t62-timeout-local-verification.json.
+### T62 Brush human render acceptance recorded
+
+User explicitly replied `render PASS（T62 Brush 1012794）`. Recorded verbatim in D:/photo/_agent_workspace/lightroom/verification/validation-first-20260905T155654/t62-brush-human-acceptance.json, bound to operation validation-20260905-brush-mask-v1 and Copy UUID E093ADC3-F3FA-4183-A58B-C291DFBBF473. Both accepted before/after SHA-256 hashes rechecked and matched. This passes only the exact Brush functional human render gate; not publishable grading, Subject acceptance, full Lightroom/catalog reopen, or issue closure. T63 stays REVIEW_REQUIRED pending the previously requested mask-panel/error state. Documentation/evidence only this turn, no Lightroom operation, code change or test rerun.
+### 2026-09-05 — T63 no-mask observation and bounded diagnostic repair
+
+- User reports `沒有遮色片` for exact Subject Copy 1012830 / 9B31D730-42F3-473B-98A8-25F5C97517FD, operation validation-20260905-subject-mask-v1. Recorded as failed/unaccepted visual observation, not permission to replay an uncertain mutation. Retained Copy/checkpoint and prior failures; no mask/Develop writes this continuation.
+- Added a final selected-Copy check after switching to Develop and reading settings, immediately before the selection-based Subject SDK call. Regression simulates selection changing during module switch and verifies zero controller calls and restored selection. This is a safety defect repair; no evidence establishes it as the current failed Subject's cause.
+- Added bounded controller begin/return/error log messages; reconcile_mask diagnostics report complete checkpoint equality using existing comparison tolerance plus current/checkpoint mask-tree types. Missing/unmaterialized tree remains REVIEW_REQUIRED. Generic preset read now reports exact unsupported path/type/depth/cycle instead of a generic nested-value error; retained depth6/entry2000 limits. Do not increase limits without live evidence.
+- Focused HandlerDevelop 29/29, HandlerMask 45/45 PASS. Full isolated commands: lua.exe _agent_workspace/runtime/lua-spec-runner.lua plugin/spec/<name>_spec.lua, one process per 14 specs with installed luassert LUA_PATH: 202 PASS / 0 failed. luac.exe -p on 35 Lua files PASS. selene.exe plugin/LightroomMCP.lrplugin: 0 errors/warnings/parse errors. Scoped git diff --check PASS. Server unchanged from previously verified 190-test build; no unnecessary TypeScript rebuild.
+- Prepared read-only.mjs; node --check PASS. No live execution of new Lua yet: manual reload of the SAME existing T62 plugin requested because new Lua code requires reloading and native Lightroom UI control is unavailable. No saved config change. Historical successful Subject SDK call on DSC_5349 does not prove current DSC_5346 success. SDK reference: https://lrc.mcor.dev/modules/LrDevelopController.html documents createNewMask(aiSelection, subject) in Develop; it does not establish a masking-panel readiness fix.
+- Current evidence and fingerprints: D:/photo/_agent_workspace/lightroom/verification/validation-first-20260905T155654/t63-no-mask-diagnosis. T62 Brush exact human PASS retained; full catalog reopen and later ordered gates remain pending. No push, merge, issue closure, deployment or existing-mask adjustment.
+### T63 same-Copy diagnosis live; checkpoint reader defect isolated
+
+- User confirmed reload. Ran `node D:/photo/_agent_workspace/lightroom/verification/validation-first-20260905T155654/t63-no-mask-diagnosis/read-only.mjs` through the already authorized exclusive bridge. Exit0. Original Copy operation reconciled to exact Copy1012830 UUID and Master; reconcile_mask confirmed complete current settings equal the original checkpoint under existing MaskAdapter numeric tolerance. Both mask-tree fields nil. Source hash, returned Master/Copy metadata and selection unchanged. Zero create_mask, zero exports. Bridge closed; exited bridge lock retained in live evidence. This is current no-delta evidence, not successful Subject creation or true undo.
+- Live error now pinpoints settings.FilterList.Filters.1.Images.1.MatrixParamsA: nesting limit (6). This confirms the independent checkpoint-reader defect, not why AI generated no mask. Raised bounded serialization depth to16, matching existing MaskAdapter full-settings cloning, while preserving cycle/per-table entry2000 limits. Added observed FilterList shape regression, copy-isolation/zero-write assertions; retained depth16 and cycle rejection.
+- Before fix scoped HandlerDevelop:28 passed/2 expected failures. After fix full isolated Lua14specs/203 tests PASS; luac35/35; production Selene0/0/0; scoped diff check PASS. Server unchanged. New script read-only-depth-fix.mjs syntax PASS and uses a fresh output directory; requires actual checkpoint read success. Requested another same-plugin reload only after this concrete tested repair. New reader is not yet live verified; no Subject retry.
+- Evidence: same t63-no-mask-diagnosis directory, live/result.json, live/checkpoint-read-failure.json, depth-fix-local-verification.json and lua-checks-depth-fix.txt. User no-mask observation and all earlier failure artifacts retained.
+### 2026-09-06 — reported reload; read-only depth verification blocked by transport
+
+- User reports `已重載`. Ran read-only-depth-fix.mjs with no Lightroom mutation calls. First attempt stopped at bridge-exists guard, before creating its run directory or connecting. Existing owner PID100580 was verified as exact roadmap-integration Node dist/index.js. Tried existing Codex get_photo_metadata(1012830): Plugin response timeout(30s). Plugin log confirms repeated auth token mismatch after reload, not a photo error.
+- Within prior exclusive-bridge authorization, verified PID/command/lock again, archived owner record/non-photo lock/log tail in t63-no-mask-diagnosis/bridge-recovery-20260906, stopped only that stale-token Node bridge and removed only its unchanged exited-owner lock. Lightroom PID50404 was left running and responding. No config/preferences/token edits.
+- Second script execution reached MCP handshake but failed its initial read-only readiness probe. Log confirms authenticated get_selected_photos returned one photo, then response sender stalled5s, repeated response-port rebinds and dropped responses. No get_develop_preset, Copy mutation or photo export was reached. Retained live-depth-fix/failure.json and handshake.json. A successful MCP tool-list handshake is not live Lightroom acceptance. Backend finally closed and archived its dead-child lock.
+- Startup logs include `PluginInit entered` / `Plugin bootstrap attempt` found in installed Modules/main-checkout bootstrap, absent from T62 PluginInit. Current saved Lightroom preferences (written00:30:41) nevertheless select/install the correct T62 path and mark Modules and roadmap plugin paths disabled. Only one Lightroom process; T62 path not a link. This is evidence of startup/runtime inconsistency, not proof of two currently enabled plugins or a root cause warranting speculative code changes.
+- Requested normal Lightroom/catalog close and reopen to clear residual channels, then same-Copy read-only verification. Prepared fresh single-use read-only-after-lightroom-reopen.mjs; node --check PASS. Depth16 repair remains locally203tests/35syntax/cleanSelene and not live confirmed. T63 remains REVIEW_REQUIRED; original Brush human PASS unaffected. No new code changes or code-test reruns this continuation.
+### 2026-09-06 — user reopened Lightroom; UI helper blocked before input
+
+- User said `已重開`, then authorized routine computer operations while away and said they were going to shower. Attempted the prepared read-only-after-lightroom-reopen.mjs. Exit1: Lightroom plugin not connected. New Lightroom PID116404 started00:39:02 and remained responding; no MCP ports58763/58764 and no new plugin-start log after00:37 shutdown. Final bounded recheck00:44:32 still no ports. This is not evidence of catalog corruption or successful catalog loading.
+- Read the computer-use skill and required guidance/confirmation/API references; discovered callable node_repl. Direct documented import of @oai/sky failed before any UI call: `Importing module "node:process" is not allowed in node_repl`. No window was inspected or clicked. Did not bypass the helper restriction or use guessed UI coordinates. Prior description of all native tools being unavailable was too broad: a tool exists, but initialization is currently blocked.
+- User authorization is retained in session for necessary ordinary computer operations; the current blocker is capability, not a request for repeated permission. No additional Lightroom restart/termination, catalog lock change, preference/config edit, Develop/mask call or export. Existing Copies/photos retained. Subject remains REVIEW_REQUIRED; depth16 live check still pending and Brush original human PASS remains exact-run only.
+- Evidence: t63-no-mask-diagnosis/live-after-lightroom-reopen/failure.json, post-reopen-blocker-20260906.json. Need visible Lightroom startup/dialog state or restored Computer Use/MCP before resuming. Do not rerun an already-used single-use script destination; preserve every failure directory. Local code unchanged, so no code tests repeated; scoped documentation diff checks only.
+### 2026-09-06 — Computer Use runtime refreshed; Lightroom app approval pending
+
+- Received repair-task handoff from01a0727a-7e98-7202-9207-fba84c10521c. Initial fresh-turn package import still failed node:process. Following that task's verified official sequence: js_add_node_module_dir for managed runtime440c4f095d41ea30/bin/node_modules (returnedfalse), js_reset (success), package-name import @oai/sky (PASS), sky.list_apps (PASS). No configuration/package/sandbox edits by this task; repair task owns its separate config change evidence.
+- Selected the unique Lightroom returned window from this task's inventory, then get_window returned current window336894. get_window_state failed with `Computer Use app approval timed out`. Confirmed sky initialized/targetWindow returned/stateCapturedfalse; no screenshots/accessibility or UI input. Runtime import defect is cleared for this kernel; application-access approval is a separate pending gate.
+- Reported both success and subsequent app-approval timeout back to repair task. User's routine UI-operation authorization is already present; this is a tool-controlled app access prompt, not a new scope permission request. Wait for actual app access, then refresh selection/state. Never reuse unobserved coordinates or call a mask creation recovery.
+- Evidence: t63-no-mask-diagnosis/computer-use-refresh-20260906.json. Lightroom Subject Copy1012830/checkpoint remains REVIEW_REQUIRED; depth16 live check pending. No Lightroom/photo mutation or exports; no code changes/tests this continuation.
+### 2026-09-06 — UI access restored; depth read, Brush reopen and new Subject live success
+
+- User explicitly said `允許` for app access; official Computer Use now captured Lightroom and accepted native UI input. Recovered a failed nonforeground click by activate/reobserve; an inaccessible cached element index was not retried blindly. Used newly observed coordinates. UI proved the selected Copy marker validation-20260905-subject-copy-v1 and registered T62 plugin path/version0.10.0.0. Existing Modules entry was disabled. No config changes by this task.
+- T62 status display was stale: manager initially showed Runningfalse/StartServer, while logs show automatic bind01:32:23. One later visible Start button click actually stopped that server01:33:28. Read back ports/logs, refreshed UI, then knowingly started the stopped server01:34:20. Did not touch Develop or Lightroom process. Document this observed UI/actual-state mismatch; do not use the button label alone for future toggles. Dead bridge lock owner10204 had no process; archived exact non-photo lock before clearing it. No live process was terminated in this continuation.
+- `node .../t63-no-mask-diagnosis/read-only-after-ui-start-20260906.mjs`: first stopped before connection on dead lock; after verified dead-lock cleanup exit0. Exact original Copy1012830/UUID/Master/copy-operation reconciled. get_develop_preset now fully reads checkpoint42415F6F-4FB4-48A3-B4EE-E1029A932D4B. Full current settings equal checkpoint under existing tolerance, both mask trees nil; source hash, returned Master/Copy state and selection unchanged. Depth16 reader LIVE PASS. These are PRE-new-diagnostic observations; the Copy now contains the new successful mask described below.
+- `node .../verify-brush-after-lightroom-reopen-20260906.mjs`: exit0. Same Brush Copy1012794, original operation/checkpoint, 2 readonly reconciliations, new non-overwriting export, unchanged Master/source SHA/selection. Lightroom persisted mask03F39C408D7F5B468457F941185EF228 and correction5CB4AED2CD18CD4AB0D37B9E9F118598 through normal reopen; ownership verified by existing exact checkpoint-delta logic. Compared with originally user-accepted after image: MAE0.119482/max5/no pixels>10. Visual local brightening retained. Original human functional PASS applies to its exact prior run; this adds technical reopen evidence, no issue closure.
+- With real UI access, inspected original Subject Copy's empty mask panel and no visible error. Original failed operation preserved. After complete no-delta reconciliation and full Lightroom restart, performed a separately identified, single controlled diagnostic ON THE SAME COPY, with current source/build fingerprint checks, current original-checkpoint-equality preflight, exact Copy identity, fresh-operation checkpoint absence, write-ahead logs, and one-call guard. No new Copy. This is not a blind replay of the old create request; no old request was sent to create_mask. Root-cause hypotheses (UI readiness/startup state) remain unproven.
+- `node .../run-t63-ui-ready-single-diagnostic-20260906.mjs --execute-on-reconciled-copy`: exit0, real unmodified PhotoAgent executeMaskCreation -> CREATED/validated/retry_allowedfalse. Copy1012830 / 9B31D730-42F3-473B-98A8-25F5C97517FD; new operation validation-20260906-subject-ui-ready-diagnostic-v1. Zero create_virtual_copy, one create_mask. Checkpoint552F8F81-AF32-44A6-879A-0393D8C50D41; maskEC53027F2C3BDC438A80187C73FF22F7; correctionFAD53E220F2CDB4E8209067869813819. Controller begin/return at01:43:07; final result about5s later. Two immediate readonly reconciliations PASS; Master/source/adjacent sidecar hashes and selection unchanged. Fresh before/after render shows squirrel-only lift: MAE2.612378/max72/7.125758% pixels>10; bbox29,475,1097,851 at2048x1365.
+- Important report correction: public exposure0.25 is currently copied directly into SDK LocalExposure2012; stable UI for this exact named mask showed +1.00EV. The historic mask name +0.25EV is MISLABELED and retained solely to preserve operation identity, not accepted as EV accuracy. README now documents native SDK-value semantics and this observed UI value without inventing a universal conversion. General EV mapping/interface validation remains unverified. No existing mask was renamed or adjusted to hide this difference.
+- Completed new Subject persistence using native UI Ctrl+Q, visible Yes confirmation, optional backup `此次略過` only (not change schedule/skip-today); waited until old PID116404 exited, then launched existing Lightroom. Launch initially reported no targetable window; subsequent inventory/CIM found new PID115984/window533002, so no duplicate launch. Confirmed same catalog title and Copy marker. Opened plugin manager; checked actual ports before touching any Start/Stop control, found listeners and simply closed manager. `node .../verify-subject-after-lightroom-reopen-20260906.mjs`: exit0, 2 readonly reconciliations, same mask/correction/checkpoint, no create call, new export. Compared with new diagnostic after image: MAE0.093257/max8/no pixels>10; retained subject effect. Master/source/selection unchanged within verification. No forced termination/catalog lock deletion/config edits.
+- Review pair prepared and opened with Codex file tool: t63-subject-new-case-comparison-20260906.md. New Subject human render PASS requested with exact Copy/date/operation scope and explicit UI+1.00EV caveat. It remains PENDING; do not import the old Subject failure or old Brush PASS. Original failure remains historical REVIEW_REQUIRED; original checkpoint-equal proof was before the new mask. Never call old create_mask as recovery.
+- Scripts were syntax checked; all runs are single-use/new output directories. Pinned executable source/build matched recorded203Lua/190server verification; no code changed/tests rerun this continuation. README/log/evidence edits only beyond authorized live operations. Existing dirty source/staged AGENTS preserved. No existing-mask adjustment development, cloud upload, push/merge/issue closure/deploy. Full details under validation-first-20260905T155654; later ordered phases remain pending.
+### 2026-09-06 — T63 new Subject human render PASS recorded
+
+User replied verbatim `render PASS` to the immediately preceding review of Copy1012830, operation `validation-20260906-subject-ui-ready-diagnostic-v1`. Recorded as functional human acceptance only, after the corrected actual +1.00EV UI disclosure. Recomputed the exact before/after SHA-256 values and matched the review evidence. Live CREATED/validated and full normal Lightroom reopen were already verified for this same case. Original failed operation remains preserved as REVIEW_REQUIRED; no creation or adjustment was replayed. Evidence: `D:/photo/_agent_workspace/lightroom/verification/validation-first-20260905T155654/t63-subject-human-acceptance-20260906.json`. Proceed to ordered T58–T60 verification. Sky remains unsupported; no existing-mask adjustment, issue closure, push or deployment authorized/performed.
+
+### 2026-09-10 — pending-validation delivery verification
+
+- Delivery scope is the T62 mask-creation branch plus its current uncommitted safety fixes and documentation. This remains a pending-validation snapshot; it is not a claim that every mask kind, Lightroom version, catalog reopen, or human render gate has passed.
+- Fresh server gates on the current source passed: `npm.cmd run check`; `npm.cmd run lint`; `npm.cmd run build`; `npm.cmd test -- --runInBand` (16 suites, 190 tests).
+- The repository `mise run lua:lint` and `mise run lua:test` wrappers could not resolve pinned tool versions because this sandbox blocked their network metadata requests. No dependency was installed or changed. Equivalent already-installed tools were then run directly: Selene 0.31.0 reported 0 errors, 0 warnings, 0 parse errors; all 14 Lua spec files passed individually through `lua-spec-runner.lua` (203 passed, 0 failed).
+- `git diff --check` passed before this log append, with only existing LF-to-CRLF worktree warnings. No Lightroom operation, plug-in change/reload, photo/catalog mutation, or export was performed for delivery preparation.
+- Next delivery step: commit the exact audited worktree on an isolated `codex/pending-validation-20260910` branch, integrate current `origin/main`, rerun affected gates after conflict resolution if any, and push the branch. Main merge remains a separate decision and is not performed by this checkout.
+
+## 2026-09-06 - User-approved autonomy and delivery rules
+
+- Updated current AGENTS.md for autonomous Sol/Luna delegation and in-scope normal
+  push/PR/merge, evidence-backed issue closure and deployment without per-step
+  approval. MCP checkouts also permit controlled automated plug-in installation.
+- Existing code, index and historical log entries preserved. No release or plug-in
+  installation performed. Photo protections and acceptance gates remain required.
+- Backups: D:/photo/_agent_workspace/reviews/agent-rules-20260906-143206/manifest.json
+- Validation command: python C:/Users/John/Documents/Codex/2026-09-06/new-chat/work/update_agent_rules.py
+  Preflight parsed both Codex configs and both role TOMLs with tomllib, compared
+  config objects and asserted exact replacement counts. Post-write readback/diff
+  and CLI checks will be recorded after execution.
+- No code/build/live Lightroom tests for this documentation/config change.
+  Full application restart and new-session role discovery remain pending.
+
+- Completed verification: exact byte readback, backup SHA-256 checks, unchanged
+  photo safety blocks/history prefixes, paired TOML parse and config-object
+  comparison PASS. CLI --strict-config doctor: config.load, mcp.config and
+  desktop handshake OK. git diff --check -- AGENTS.md WORKLOG.md PASS in all
+  five affected checkouts. Existing LF/CRLF warnings were not normalized.
+- Existing sandbox provisioning failure persists; Windows permissions/sandbox
+  settings unchanged. Full restart and new sol_worker discovery not yet run.

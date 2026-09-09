@@ -742,6 +742,61 @@ const presetSelectorSchema: InputSchema = {
   anyOf: [{ required: ["preset_uuid"] }, { required: ["preset_name"] }],
 };
 
+const maskCreationInputSchema: Tool["inputSchema"] = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    photo_id: {
+      ...catalogPhotoId,
+      description: "Stable Lightroom catalog ID of the verified Workflow Copy; paths are not accepted",
+    },
+    expected_photo_uuid: {
+      type: "string",
+      minLength: 1,
+      description: "Expected persistent UUID of the Workflow Copy",
+    },
+    expected_master_uuid: {
+      type: "string",
+      minLength: 1,
+      description: "Expected persistent UUID of the Workflow Copy's Master",
+    },
+    operation_id: operationId,
+    mask_kind: {
+      type: "string",
+      enum: maskKinds,
+      description: "Mask kind; capability is checked again by the running Lightroom plugin",
+    },
+    name: {
+      type: "string",
+      minLength: 1,
+      maxLength: 128,
+      pattern: ".*\\S.*",
+      description: "Non-empty auditable display name; never used as the sole mask identity",
+    },
+    kind_parameters: maskKindParametersSchema,
+    local_settings: maskLocalSettingsSchema,
+  },
+  required: [
+    "photo_id",
+    "expected_photo_uuid",
+    "expected_master_uuid",
+    "operation_id",
+    "mask_kind",
+    "name",
+    "kind_parameters",
+    "local_settings",
+  ],
+  oneOf: maskKinds.map((maskKind) => ({
+    properties: {
+      mask_kind: { enum: [maskKind] },
+      kind_parameters: maskKind === "brush"
+        ? brushKindParametersSchema
+        : aiKindParametersSchema,
+    },
+    required: ["mask_kind", "kind_parameters"],
+  })),
+};
+
 const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
   {
     name: "search_photos",
@@ -818,60 +873,22 @@ const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
     description:
       "Create or reconcile one allowlisted Lightroom mask on one identity-verified Workflow Copy. Requires stable photo and Master UUIDs, an operation ID, explicit structured kind parameters, and allowlisted local settings. The plugin creates a unique checkpoint before mutation, serializes selection-sensitive work, and reports success only after Lightroom readback proves the new mask and preservation; Subject and Sky may return unsupported when runtime AI capability is not verified.",
     outputSchema: MASK_OUTPUT_SCHEMA,
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
+    inputSchema: maskCreationInputSchema,
+  },
+  {
+    name: "reconcile_mask",
+    contractRevision: "reconcile-mask.v1",
+    luaHandler: "HandlerMask.reconcileMask",
+    description:
+      "Read-only reconciliation of one exact prior Brush or Subject mask operation on an identity-verified Workflow Copy. Requires the original full request and checkpoint; never creates a mask/checkpoint, patches an incomplete delta, changes selection/module, or writes Develop settings. Missing or conflicting evidence returns REVIEW_REQUIRED. Sky remains unsupported.",
+    outputSchema: {
+      ...MASK_OUTPUT_SCHEMA,
       properties: {
-        photo_id: {
-          ...catalogPhotoId,
-          description: "Stable Lightroom catalog ID of the verified Workflow Copy; paths are not accepted",
-        },
-        expected_photo_uuid: {
-          type: "string",
-          minLength: 1,
-          description: "Expected persistent UUID of the Workflow Copy",
-        },
-        expected_master_uuid: {
-          type: "string",
-          minLength: 1,
-          description: "Expected persistent UUID of the Workflow Copy's Master",
-        },
-        operation_id: operationId,
-        mask_kind: {
-          type: "string",
-          enum: maskKinds,
-          description: "Mask kind; capability is checked again by the running Lightroom plugin",
-        },
-        name: {
-          type: "string",
-          minLength: 1,
-          maxLength: 128,
-          pattern: ".*\\S.*",
-          description: "Non-empty auditable display name; never used as the sole mask identity",
-        },
-        kind_parameters: maskKindParametersSchema,
-        local_settings: maskLocalSettingsSchema,
+        ...MASK_OUTPUT_SCHEMA.properties,
+        result: { type: "string", enum: ["reconciled", "unsupported", "REVIEW_REQUIRED"] },
       },
-      required: [
-        "photo_id",
-        "expected_photo_uuid",
-        "expected_master_uuid",
-        "operation_id",
-        "mask_kind",
-        "name",
-        "kind_parameters",
-        "local_settings",
-      ],
-      oneOf: maskKinds.map((maskKind) => ({
-        properties: {
-          mask_kind: { enum: [maskKind] },
-          kind_parameters: maskKind === "brush"
-            ? brushKindParametersSchema
-            : aiKindParametersSchema,
-        },
-        required: ["mask_kind", "kind_parameters"],
-      })),
     },
+    inputSchema: maskCreationInputSchema,
   },
   {
     name: "list_collections",
@@ -1240,6 +1257,7 @@ export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> =
     retry_policy: "readback_before_retry",
     safe_to_resume: false,
   }),
+  reconcile_mask: readOnlySemantics("photo", { concurrency: "exclusive_backend" }),
   list_collections: readOnlySemantics("catalog"),
   create_collection: mutatingSemantics("catalog"),
   add_to_collection: mutatingSemantics("catalog", {

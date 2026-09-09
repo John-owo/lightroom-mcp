@@ -293,14 +293,16 @@ local function findPreset(args)
     return matches[1]
 end
 
-local function cloneSerializable(value, depth, seen)
+local function cloneSerializable(value, depth, seen, path)
     local valueType = type(value)
     if valueType == "number" or valueType == "string" or valueType == "boolean" then
         return value, true
     end
-    if valueType ~= "table" or depth >= 6 or seen[value] then
-        return nil, false
-    end
+    if valueType ~= "table" then return nil, false, path .. ": unsupported " .. valueType end
+    -- Lightroom FilterList image matrices exceed six levels. Match the bounded
+    -- full-Develop clone used by MaskAdapter; retain cycle and entry guards.
+    if depth >= 16 then return nil, false, path .. ": nesting limit (16)" end
+    if seen[value] then return nil, false, path .. ": cycle" end
 
     seen[value] = true
     local out = {}
@@ -308,17 +310,18 @@ local function cloneSerializable(value, depth, seen)
     for key, item in pairs(value) do
         if type(key) ~= "string" and type(key) ~= "number" then
             seen[value] = nil
-            return nil, false
+            return nil, false, path .. ": unsupported key type " .. type(key)
         end
         count = count + 1
         if count > 2000 then
             seen[value] = nil
-            return nil, false
+            return nil, false, path .. ": entry limit (2000)"
         end
-        local cloned, supported = cloneSerializable(item, depth + 1, seen)
+        local childPath = (path .. "." .. tostring(key):gsub("%c", "?"):sub(1, 48)):sub(1, 256)
+        local cloned, supported, reason = cloneSerializable(item, depth + 1, seen, childPath)
         if not supported then
             seen[value] = nil
-            return nil, false
+            return nil, false, reason
         end
         out[key] = cloned
     end
@@ -331,9 +334,9 @@ local function normalizedPresetSettings(preset)
     if type(settings) ~= "table" then
         error("Preset settings are unavailable")
     end
-    local normalized, supported = cloneSerializable(settings, 0, {})
+    local normalized, supported, reason = cloneSerializable(settings, 0, {}, "settings")
     if not supported then
-        error("Preset settings contain unsupported nested values")
+        error("Preset settings contain unsupported nested values: " .. tostring(reason), 0)
     end
     return normalized
 end

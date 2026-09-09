@@ -116,6 +116,40 @@ describe("HandlerDevelop.listDevelopPresets", function()
 end)
 
 describe("HandlerDevelop.getDevelopPreset", function()
+    it("reports the precise blocked path while retaining cycle and depth limits", function()
+        local nested, cursor = {}, nil
+        cursor = nested
+        for _ = 1, 16 do cursor.a = {}; cursor = cursor.a end
+        local _, Handler = setup({ pluginPresets = {
+            fakePreset("Nested", { uuid = "nested", settings = nested }),
+        } })
+        assert.has_error(function() Handler.getDevelopPreset({ preset_uuid = "nested" }) end,
+            "Preset settings contain unsupported nested values: settings"
+                .. string.rep(".a", 16) .. ": nesting limit (16)")
+        local cyclic = {}
+        cyclic.self = cyclic
+        local _, CycleHandler = setup({ pluginPresets = {
+            fakePreset("Cycle", { uuid = "cycle", settings = cyclic }),
+        } })
+        assert.has_error(function() CycleHandler.getDevelopPreset({ preset_uuid = "cycle" }) end,
+            "Preset settings contain unsupported nested values: settings.self: cycle")
+    end)
+
+    it("reads nested Lightroom FilterList matrices without changing their values", function()
+        -- Shape observed in the real checkpoint read error on 2026-09-05.
+        local settings = { FilterList = { Filters = { { Images = { {
+            MatrixParamsA = { 1, 0, 0, 1 }, MatrixParamsB = { { 0.25, 0.5 } },
+        } } } } } }
+        local catalog, Handler = setup({ pluginPresets = {
+            fakePreset("Matrix", { uuid = "matrix", settings = settings }),
+        } })
+        local result = Handler.getDevelopPreset({ preset_uuid = "matrix" })
+        assert.are.same(settings, result.settings)
+        assert.are.equal(0, catalog.getWriteAccessCount())
+        result.settings.FilterList.Filters[1].Images[1].MatrixParamsA[1] = 9
+        assert.are.equal(1, settings.FilterList.Filters[1].Images[1].MatrixParamsA[1])
+    end)
+
     it("returns exact preset settings", function()
         local preset = fakePreset("John Warm", {
             uuid = "warm-1",

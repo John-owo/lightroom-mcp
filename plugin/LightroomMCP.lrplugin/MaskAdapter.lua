@@ -5,6 +5,7 @@
 -- group, and proves that a readback contains exactly that group in addition
 -- to the caller's previous mask tree.
 local MaskAdapter = {}
+local JSON = require 'JSON'
 
 MaskAdapter.SCHEMA = "MaskGroupBasedCorrections.v1"
 MaskAdapter.MAX_NAME_LENGTH = 128
@@ -502,22 +503,22 @@ function MaskAdapter.capability(
                 readback_guarantees = supported and {
                     "MaskSyncID", "CorrectionSyncID", "Mask/Paint Dabs",
                     "Radius", "Feather", "Flow", "MaskValue", "local settings",
-                } or {},
+                } or JSON.array(),
                 reason = brushReason,
             },
             subject = {
                 supported = subjectSupported,
-                accepted_parameters = {},
+                accepted_parameters = JSON.array(),
                 readback_guarantees = subjectSupported and {
                     "unique checkpoint delta", "Mask/Image", "MaskSubType=1",
                     "ErrorReason absent-or-zero", "opaque AI payload preserved", "local settings",
-                } or {},
+                } or JSON.array(),
                 reason = subjectReason,
             },
             sky = {
                 supported = false,
-                accepted_parameters = {},
-                readback_guarantees = {},
+                accepted_parameters = JSON.array(),
+                readback_guarantees = JSON.array(),
                 reason = skyReason,
             },
         },

@@ -169,6 +169,7 @@ function subjectSuccessResult() {
 }
 
 async function startHarness(options?: {
+  action?: string;
   expectedArgs?: Record<string, unknown>;
   resultFactory?: () => Record<string, unknown>;
 }): Promise<Harness> {
@@ -197,7 +198,7 @@ async function startHarness(options?: {
     responsePort,
     token: TOKEN,
     handler: (action, params) => {
-      expect(action).toBe("create_mask");
+      expect(action).toBe(options?.action ?? "create_mask");
       expect(params).toEqual(expectedArgs);
       const result = options?.resultFactory?.() ?? successResult();
       return malformed ? { ...result, mask_id: 42 } : result;
@@ -261,6 +262,34 @@ describe("create_mask across MCP and plugin transports", () => {
     harness.response.stop();
     await harness.plugin.stop();
     harness = null;
+  });
+
+  it("negotiates read-only reconciliation and rejects a created result on that route", async () => {
+    const fixture = successResult();
+    const args = {
+      photo_id: "101", expected_photo_uuid: "uuid-copy", expected_master_uuid: "uuid-master",
+      operation_id: OPERATION_ID, mask_kind: "brush", name: "Face lift",
+      kind_parameters: fixture.kind_parameters, local_settings: { exposure: 0.5, clarity: 12 },
+    };
+    let verdict = "reconciled";
+    harness = await startHarness({
+      action: "reconcile_mask", expectedArgs: args,
+      resultFactory: () => ({ ...fixture, result: verdict, selection_restoration: { status: "not_needed", verified: true } }),
+    });
+    const listed = await harness.client.listTools();
+    const tool = listed.tools.find((entry) => entry.name === "reconcile_mask");
+    expect(tool?._meta?.["io.github.john-owo.lightroom-mcp/operation-semantics"]).toMatchObject({
+      side_effect: "read_only", idempotent: true, safe_to_resume: true,
+      requires_active_selection: false, requires_editor_foreground: false,
+      concurrency: "exclusive_backend",
+    });
+    const result = (await harness.client.callTool({ name: "reconcile_mask", arguments: args })) as ToolResult;
+    expect(result.structuredContent?.result).toBe("reconciled");
+    verdict = "created";
+    await expectMalformedEvidence(harness.client.callTool({ name: "reconcile_mask", arguments: args }));
+    verdict = "reconciled";
+    harness.setMalformed(true);
+    await expectMalformedEvidence(harness.client.callTool({ name: "reconcile_mask", arguments: args }));
   });
 
   it("round-trips a typed Brush result and rejects output type drift", async () => {

@@ -1,5 +1,23 @@
 local helper = require 'spec_helper'
 local MaskAdapter = require 'MaskAdapter'
+local JSON = require 'JSON'
+
+describe("Mask capability wire format", function()
+    it("serializes every capability list as a JSON array in supported and unsupported states", function()
+        for _, available in ipairs({ true, false }) do
+            local capability = MaskAdapter.capability({
+                ProcessVersion = "11.0",
+                MaskGroupBasedCorrections = {},
+            }, "15.0", available, available, available)
+            for _, kind in ipairs({ "brush", "subject", "sky" }) do
+                local encoded = JSON:encode(capability.kinds[kind])
+                assert.is_not_nil(encoded:find('"accepted_parameters":[', 1, true))
+                assert.is_not_nil(encoded:find('"readback_guarantees":[', 1, true))
+            end
+            assert.is_false(capability.kinds.sky.supported)
+        end
+    end)
+end)
 
 local function clone(value)
     if type(value) ~= "table" then return value end
@@ -233,7 +251,135 @@ local function subjectCheckpointName(args)
         .. "] [request:" .. MaskAdapter.requestFingerprint(args) .. "]"
 end
 
+describe("HandlerMask.reconcileMask", function()
+    it("reports an unchanged checkpoint with no mask without calling the AI controller", function()
+        local before = { ProcessVersion = "15.4", EnableMaskGroupBasedCorrections = true }
+        local args = subjectArgs()
+        local catalog, _, copy, _, Handler, state = setup({
+            lightroomVersion = "15.5.1", copy = { developSettings = clone(before) },
+            pluginPresets = { fakePreset(subjectCheckpointName(args), before, "empty-checkpoint") },
+        })
+        local result = Handler.reconcileMask(args)
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_not_nil(result.reason:find("checkpoint_equal=true", 1, true))
+        assert.is_not_nil(result.reason:find("current_mask_tree_type=nil", 1, true))
+        assert.are.same(before, copy.__meta.developSettings)
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.are.equal(0, state.getAddedPresetCalls())
+    end)
+
+    it("rejects Master and mismatched Copy or Master identity without side effects", function()
+        local catalog, _, _, other, Handler, state = setup()
+        for _, override in ipairs({
+            { photo_id = "100", expected_photo_uuid = "uuid-master" },
+            { expected_photo_uuid = "wrong-copy" },
+            { expected_master_uuid = "wrong-master" },
+        }) do
+            assert.has_error(function() Handler.reconcileMask(brushArgs(override)) end)
+        end
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(0, state.getAddedPresetCalls())
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.are.equal(0, #state.getModuleSwitches())
+        assert.are.equal(other, catalog:getTargetPhoto())
+    end)
+
+    it("keeps Sky unsupported without creating a checkpoint or changing selection", function()
+        local catalog, _, _, other, Handler, state = setup()
+        local result = Handler.reconcileMask(subjectArgs({ mask_kind = "sky" }))
+        assert.are.equal("unsupported", result.result)
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.are.equal(0, state.getAddedPresetCalls())
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.are.equal(0, #state.getModuleSwitches())
+        assert.are.equal(other, catalog:getTargetPhoto())
+    end)
+
+    for _, kind in ipairs({ "brush", "subject" }) do
+        it("reads an existing " .. kind .. " twice without any new side effect", function()
+            local catalog, _, copy, other, Handler, state = setup()
+            local args = kind == "brush" and brushArgs() or subjectArgs()
+            assert.are.equal("created", Handler.createMask(args).result)
+            local before = clone(copy.__meta.developSettings)
+            local writes = catalog:getWriteAccessCount()
+            local presets = state.getAddedPresetCalls()
+            local subjects = state.getSubjectCreateCalls()
+            local switches = #state.getModuleSwitches()
+            for _ = 1, 2 do
+                local result = Handler.reconcileMask(args)
+                assert.are.equal("reconciled", result.result)
+                assert.are.equal("not_needed", result.selection_restoration.status)
+                assert.is_true(result.selection_restoration.verified)
+            end
+            assert.are.same(before, copy.__meta.developSettings)
+            assert.are.equal(writes, catalog:getWriteAccessCount())
+            assert.are.equal(presets, state.getAddedPresetCalls())
+            assert.are.equal(subjects, state.getSubjectCreateCalls())
+            assert.are.equal(switches, #state.getModuleSwitches())
+            assert.are.equal(other, catalog:getTargetPhoto())
+        end)
+
+        it("refuses a missing " .. kind .. " checkpoint without creating anything", function()
+            local catalog, _, copy, other, Handler, state = setup()
+            local before = clone(copy.__meta.developSettings)
+            local result = Handler.reconcileMask(kind == "brush" and brushArgs() or subjectArgs())
+            assert.are.equal("REVIEW_REQUIRED", result.result)
+            assert.are.same(before, copy.__meta.developSettings)
+            assert.are.equal(0, catalog:getWriteAccessCount())
+            assert.are.equal(0, state.getAddedPresetCalls())
+            assert.are.equal(0, state.getSubjectCreateCalls())
+            assert.are.equal(0, #state.getModuleSwitches())
+            assert.are.equal(other, catalog:getTargetPhoto())
+        end)
+    end
+
+    it("does not finish an incomplete Subject delta or patch its local settings", function()
+        local catalog, _, copy, _, Handler, state = setup()
+        local args = subjectArgs()
+        assert.are.equal("created", Handler.createMask(args).result)
+        local subject = copy.__meta.developSettings.MaskGroupBasedCorrections[2]
+        subject.CorrectionName = "Subject 1"
+        subject.LocalExposure2012 = 0
+        local before = clone(copy.__meta.developSettings)
+        local writes = catalog:getWriteAccessCount()
+        local result = Handler.reconcileMask(args)
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.are.same(before, copy.__meta.developSettings)
+        assert.are.equal(writes, catalog:getWriteAccessCount())
+        assert.are.equal(1, state.getSubjectCreateCalls())
+        assert.are.equal(1, state.getAddedPresetCalls())
+    end)
+
+    it("rejects a changed Brush request without patching the existing mask", function()
+        local catalog, _, copy, _, Handler, state = setup()
+        local args = brushArgs()
+        Handler.createMask(args)
+        local before = clone(copy.__meta.developSettings)
+        args.local_settings.exposure = 1
+        local result = Handler.reconcileMask(args)
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.are.same(before, copy.__meta.developSettings)
+        assert.are.equal(1, catalog:getWriteAccessCount())
+        assert.are.equal(1, state.getAddedPresetCalls())
+    end)
+end)
+
 describe("HandlerMask.createMask", function()
+    it("does not call the Subject controller if module switching changes the active photo", function()
+        local catalog, _, _, _, Handler, state = setup({
+            onSwitchModule = function(name, activeCatalog, _, other)
+                if name == "develop" then activeCatalog:setSelectedPhotos(other, {}) end
+            end,
+        })
+        local result = Handler.createMask(subjectArgs())
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.is_not_nil(result.reason:find("Subject controller was not called", 1, true))
+        assert.are.equal(0, state.getSubjectCreateCalls())
+        assert.are.equal(0, catalog:getWriteAccessCount())
+        assert.is_true(result.selection_restoration.verified)
+    end)
+
     it("creates one verified Brush on a Workflow Copy, checkpoints, preserves global settings, and restores selection", function()
         local catalog, master, copy, other, Handler, state = setup()
         local before = clone(copy.__meta.developSettings)

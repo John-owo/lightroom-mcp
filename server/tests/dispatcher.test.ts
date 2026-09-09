@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { Dispatcher } from '../src/dispatcher.js';
+import { ACTION_TIMEOUTS_MS, REQUEST_TIMEOUT_MS } from '../src/request-timeouts.js';
 
 interface SentRequest {
   id: string;
@@ -116,6 +117,42 @@ describe('Dispatcher', () => {
   describe('per-action timeout overrides', () => {
     afterEach(() => {
       jest.useRealTimers();
+    });
+
+    it('delivers a 36-second Subject review result once using production deadlines', async () => {
+      jest.useFakeTimers();
+      const d = new Dispatcher({
+        send: line => { sent.push(line); return true; },
+        getToken: () => 'test-token',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        actionTimeoutsMs: ACTION_TIMEOUTS_MS,
+      });
+      const pending = d.call('create_mask', { mask_kind: 'subject' });
+      let timedOut = false;
+      void pending.catch(() => { timedOut = true; });
+      await jest.advanceTimersByTimeAsync(36_000);
+      expect(timedOut).toBe(false);
+      const response = { result: 'REVIEW_REQUIRED', reason: 'No exact Subject delta' };
+      d.handleResponseLine(JSON.stringify({ id: parseSent(sent[0]).id, result: response }));
+      expect((await pending).result).toEqual(response);
+      expect(sent).toHaveLength(1);
+      expect(d.pendingCount()).toBe(0);
+    });
+
+    it('keeps a stalled mask bounded below the SDK deadline without resending it', async () => {
+      jest.useFakeTimers();
+      const d = new Dispatcher({
+        send: line => { sent.push(line); return true; },
+        getToken: () => 'test-token',
+        timeoutMs: REQUEST_TIMEOUT_MS,
+        actionTimeoutsMs: ACTION_TIMEOUTS_MS,
+      });
+      const pending = d.call('create_mask', { mask_kind: 'subject' });
+      const rejection = expect(pending).rejects.toThrow(/timeout \(50s\)/);
+      await jest.advanceTimersByTimeAsync(50_000);
+      await rejection;
+      expect(sent).toHaveLength(1);
+      expect(d.pendingCount()).toBe(0);
     });
 
     it('honors a longer timeout for the configured action', async () => {

@@ -85,6 +85,14 @@ style_status, lighting_cluster, confidence, notes
 | `create_develop_preset` | 從代表照片選定欄位建立版本化 checkpoint |
 | `export_develop_preset` | 複製 Lightroom preset backing file，永不覆寫既有檔案 |
 | `create_mask` | 在 identity-verified Workflow Copy 上建立或 reconcile 一個明確 schema 的 mask；Brush 使用明確路徑，Subject 使用 Lightroom 的 Select Subject 並保留其不透明 AI payload；未驗證的 runtime 或 Sky 會回傳 `unsupported` |
+| `reconcile_mask` | 以原始完整請求唯讀核對既有 Brush／Subject 操作與 checkpoint；不建立或補寫任何遮色片、不改選取或模組。證據缺少／不一致回 `REVIEW_REQUIRED`；Sky 維持 `unsupported`。需載入提供此入口的外掛版本。 |
+
+`local_settings` 目前使用直接寫入的 SDK 值，不能假定與 Lightroom 面板單位相同。
+2026-09-06 在 Lightroom 15.5.1／Process 15.4 的 Subject 案例中，
+`exposure: 0.25` 寫入 `LocalExposure2012`，面板實際顯示 **+1.00 EV**。
+呼叫端應核對實際效果與面板，不能把此請求標成 +0.25 EV；這筆觀察不代表
+已提供一般 EV 換算介面或驗證所有局部參數的單位。歷史操作名稱與請求保留，
+以另附的驗收註記更正單位，避免破壞原操作身分。
 
 既有的 `list_develop_presets` 與 `apply_develop_preset` 也支援 UUID、folder、scope；`set_develop_settings`、`copy_develop_settings` 與 checkpoint 建立支援主曲線及 RGB point-curve arrays。
 

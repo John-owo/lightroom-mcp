@@ -1,6 +1,12 @@
 local JSON = require 'JSON'
 
 describe("JSON", function()
+    it("encodes explicitly empty arrays without changing empty objects", function()
+        assert.are.equal("[]", JSON:encode(JSON.array()))
+        assert.are.equal("{}", JSON:encode({}))
+        assert.are.equal('[[],{}]', JSON:encode({ JSON.array(), {} }))
+    end)
+
     it("escapes Windows path backslashes when encoding strings", function()
         local encoded = JSON:encode({
             path = "C:\\gvv\\Photos\\Archive\\Source\\_GVV2154.NEF",

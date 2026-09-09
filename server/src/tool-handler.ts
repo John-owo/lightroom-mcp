@@ -99,7 +99,7 @@ export function createCallToolHandler(deps: ToolHandlerDeps) {
         const validation = structuredContent
           ? outputValidators.get(name)?.(structuredContent)
           : { valid: false, errorMessage: "result is not an object" };
-        if (!validation?.valid && name === "create_mask") {
+        if (!validation?.valid && (name === "create_mask" || name === "reconcile_mask")) {
           const requestOperationId = asStructuredContent(args)?.operation_id;
           const structuredContent = {
             operation_id:
@@ -116,7 +116,7 @@ export function createCallToolHandler(deps: ToolHandlerDeps) {
             validation_failure: {
               ...boundedRawEvidence(resp.result),
               validator_summary: String(
-                validation?.errorMessage ?? "result failed create_mask output validation",
+                validation?.errorMessage ?? `result failed ${name} output validation`,
               ).slice(0, MAX_VALIDATOR_SUMMARY_CHARS),
             },
           };
@@ -126,7 +126,7 @@ export function createCallToolHandler(deps: ToolHandlerDeps) {
               content: [
                 {
                   type: "text",
-                  text: "create_mask output and recovery evidence both failed contract validation",
+                  text: `${name} output and recovery evidence both failed contract validation`,
                 },
               ],
               isError: true,

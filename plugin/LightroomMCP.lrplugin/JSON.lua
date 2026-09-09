@@ -1,5 +1,11 @@
 -- Simple JSON encoder/decoder for Lightroom
 local JSON = {}
+local arrayMetatable = {}
+
+-- Lua's empty table is otherwise ambiguous; opt in only for declared list fields.
+function JSON.array()
+    return setmetatable({}, arrayMetatable)
+end
 
 function JSON:encode(obj)
     local function encode_value(v)
@@ -9,7 +15,7 @@ function JSON:encode(obj)
         elseif t == "number" or t == "boolean" then
             return tostring(v)
         elseif t == "table" then
-            local is_array = #v > 0
+            local is_array = #v > 0 or getmetatable(v) == arrayMetatable
             if is_array then
                 local values = {}
                 for i, item in ipairs(v) do

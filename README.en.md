@@ -6,7 +6,7 @@ Connect Codex, Claude, and other MCP clients to your **Adobe Lightroom Classic**
 
 ## TL;DR
 
-The Node.js MCP server connects to a Lua plug-in running inside Lightroom Classic and exposes 20 local tools. You can use this repository on its own or as the Lightroom backend for [`photo-agent`](https://github.com/John-owo/photo-agent). Versioned checkpoint creation, exact read-back, and safe preset export have passed live checks on one Windows Lightroom setup. Import compatibility and visual style still require a check in your Lightroom version with your photos.
+The Node.js MCP server connects to a Lua plug-in running inside Lightroom Classic and exposes 22 local tools. You can use this repository on its own or as the Lightroom backend for [`photo-agent`](https://github.com/John-owo/photo-agent). Versioned checkpoint creation, exact read-back, and safe preset export have passed live checks on one Windows Lightroom setup. Import compatibility and visual style still require a check in your Lightroom version with your photos.
 
 ## Contents
 

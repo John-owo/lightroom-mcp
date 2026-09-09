@@ -6,7 +6,7 @@
 
 `lightroom-mcp` 是 Lightroom Classic 的本機整合層。它用 Node.js MCP server 連接 Lightroom Lua 外掛，提供 catalog 查詢、評分、關鍵字、Develop 設定、Virtual Copy、preset checkpoint 與匯出工具。這個 fork 也保留 `raw-photo-lightroom-preset` v2 skill，協助你先分群、再用代表照片逐步調色。它可以單獨使用，也能作為 [`photo-agent`](https://github.com/John-owo/photo-agent) 的 backend。
 
-目前 server 有 20 個工具。版本化 checkpoint 的建立、讀回與匯出已在一個 Windows Lightroom Classic 環境完成實機驗證；匯出的 preset 仍需在你的 Lightroom 版本重新匯入並檢查畫面，才能確認相容性與風格。
+目前 server 有 22 個工具。版本化 checkpoint 的建立、讀回與匯出已在一個 Windows Lightroom Classic 環境完成實機驗證；匯出的 preset 仍需在你的 Lightroom 版本重新匯入並檢查畫面，才能確認相容性與風格。
 
 ## 目錄
 
@@ -155,7 +155,7 @@ style_status, lighting_cluster, confidence, notes
 
 ## MCP 工具
 
-server 目前提供 20 個工具。完整清單與參數 schema 以 [`server/src/tool-contracts.ts`](server/src/tool-contracts.ts) 為準；下表列出本 fork v0.10.0 加入的 preset round-trip 工具：
+server 目前提供 22 個工具。完整清單與參數 schema 以 [`server/src/tool-contracts.ts`](server/src/tool-contracts.ts) 為準；下表列出本 fork v0.10.0 加入的 preset round-trip 工具：
 
 | 工具 | 功能 |
 |---|---|

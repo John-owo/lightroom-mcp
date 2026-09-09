@@ -2637,3 +2637,20 @@ User replied verbatim `render PASS` to the immediately preceding review of Copy1
 - This historical README validation does not establish current T62 runtime or
   human acceptance. The 2026-09-10 pending-validation checks above cover the
   current combined source snapshot.
+
+## 2026-09-10 - pending-validation branch published
+
+- Created `codex/pending-validation-20260910` from the T62 line, committed the
+  audited working tree as `f0a5655`, and merged freshly fetched `origin/main`
+  (`010800a`) as `c6e6830`. The only merge conflict was the append-only work log;
+  both T62 history and the main README publication record were retained.
+- Corrected the merged README's stale 20-tool count to the current 22-tool
+  contract and committed that documentation-only fix as `bb8c9af`.
+- Normal non-force push created the remote pending branch. Immediate
+  `git ls-remote` readback matched local and remote at `bb8c9af`. GitHub Actions
+  listed no workflow run for this direct branch push; the fresh local server and
+  Lua gates recorded above remain the automated evidence for this snapshot.
+- The original `codex/t62-mask-creation` ref now points to `f0a5655`; its former
+  dirty T62 work is committed. The checked-out pending branch is clean. Separate
+  dirty lifecycle work in `D:/photo/lightroom-mcp-john` was not staged, changed,
+  or included. Main was not merged or pushed by this delivery.

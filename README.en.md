@@ -1,10 +1,57 @@
 # Lightroom Classic MCP Server
 
-Lets Claude (and other AI assistants) talk to your **Adobe Lightroom Classic** photo catalog. Search photos, set ratings, edit develop settings, manage collections, import/export — all by chatting.
+Connect Codex, Claude, and other MCP clients to your **Adobe Lightroom Classic** catalog. Search photos, manage metadata, edit Develop settings, create verified Virtual Copies, and export Lightroom renders through local tools.
 
 > **Preset round-trip fork (v0.10.0):** this branch adds exact preset inspection, historical-preset comparison, versioned checkpoint creation, safe preset export, and the complete `raw-photo-lightroom-preset` v2 Codex skill for RAW culling and iterative editing. See the [Traditional Chinese v2 guide](README.md) or open the [bundled skill](skills/raw-photo-lightroom-preset/SKILL.md).
 
-## Project boundary: MCP backend, not the workflow agent
+## TL;DR
+
+The Node.js MCP server connects to a Lua plug-in running inside Lightroom Classic and exposes 20 local tools. You can use this repository on its own or as the Lightroom backend for [`photo-agent`](https://github.com/John-owo/photo-agent). Versioned checkpoint creation, exact read-back, and safe preset export have passed live checks on one Windows Lightroom setup. Import compatibility and visual style still require a check in your Lightroom version with your photos.
+
+## Contents
+
+- [Feature overview](#feature-overview)
+- [Architecture and project boundary](#architecture-and-project-boundary)
+- [Glossary](#glossary)
+- [Quick start](#quick-start)
+- [Requirements](#requirements)
+- [Install for other AI tools](#install-other-ai-tools)
+- [Tools](#tools)
+- [Iterative preset workflow](#iterative-preset-workflow)
+- [CLI reference](#cli-reference)
+- [Security](#security)
+- [Develop](#develop)
+- [Troubleshooting](#troubleshooting)
+
+## Feature overview
+
+| Area | What you can do |
+| --- | --- |
+| Catalog search | Find photos and read selected-photo metadata, including stable Master and Virtual Copy identity |
+| Organization | Set ratings and keywords, manage collections, and import or export photos |
+| Develop controls | Inspect or apply presets, copy settings, and write SDK-supported Develop values |
+| Workflow Copies | Create or reconcile one identity-verified Virtual Copy with a reusable operation ID |
+| Preset checkpoints | Create, compare, and export versioned plug-in presets without overwriting older files |
+| RAW workflow skill | Pair RAW/JPEG files, triage selections, group lighting, and iterate on representative photos |
+| Lightroom renders | Export previews or delivery files from Lightroom for read-back and comparison |
+| XMP fallback | Generate a new sidecar when MCP is unavailable while refusing source or sidecar overwrite |
+
+## Architecture and project boundary
+
+```text
+┌──────────────────────┐   MCP / stdio   ┌──────────────────────┐
+│ Codex / Claude /     │ ◄──────────────► │ Node.js MCP server   │
+│ photo-agent          │                  └──────────┬───────────┘
+└──────────────────────┘                             │ localhost TCP
+                                             :58763 │ request
+                                             :58764 │ response
+                                                    ▼
+                                         ┌──────────────────────┐
+                                         │ Lightroom Lua plug-in │
+                                         └──────────┬───────────┘
+                                                    ▼
+                                         Lightroom catalog / Develop
+```
 
 This repository is the standalone Lightroom Classic integration layer. It owns
 the MCP server, Lua plug-in, catalog/develop operations, checkpoints, and
@@ -21,6 +68,17 @@ The bundled `raw-photo-lightroom-preset` remains historical workflow guidance
 and a standalone client recipe. New workflow-engine features belong in
 PhotoAgent; Lightroom-specific tools and transport belong here.
 
+## Glossary
+
+| Term | Meaning |
+| --- | --- |
+| MCP | Model Context Protocol, the interface an AI client uses to call this server's Lightroom tools |
+| XMP sidecar | A small settings file stored beside a RAW file; it records edits without changing RAW pixels |
+| Checkpoint | A named, versioned plug-in preset used to preserve and compare editing steps |
+| Workflow Copy | An identity-verified Lightroom Virtual Copy used for automated edits while the Master stays unchanged |
+| `REVIEW_REQUIRED` | A fail-closed result that stops automation when read-back cannot prove one safe outcome |
+| Closed loop | Render or read back each bounded edit before choosing the next adjustment |
+
 [![npm](https://img.shields.io/npm/v/@mskalski/lightroom-mcp.svg)](https://www.npmjs.com/package/@mskalski/lightroom-mcp)
 [![release](https://img.shields.io/github/v/release/Automaat/lightroom-mcp.svg)](https://github.com/Automaat/lightroom-mcp/releases/latest)
 
@@ -29,7 +87,30 @@ PhotoAgent; Lightroom-specific tools and transport belong here.
 
 ---
 
-## Install (Claude Desktop — easiest, 3 steps)
+## Quick start
+
+Use the three-step Claude Desktop installer below, or run this source checkout with Node.js:
+
+```bash
+git clone https://github.com/John-owo/lightroom-mcp.git
+cd lightroom-mcp/server
+npm ci
+npm run build
+node dist/index.js install-plugin
+```
+
+Restart Lightroom Classic, open **File → Plug-in Manager → Lightroom MCP**, and click **Start Server**. Connect your MCP client to `server/dist/index.js`, then begin with a read-only request such as “List my Lightroom collections.” Use a non-critical photo for the first write test.
+
+## Requirements
+
+| Item | Requirement | Notes |
+| --- | --- | --- |
+| Node.js | 18+ | Required for source builds; CI currently uses 24.19 |
+| Lightroom Classic | A version that loads this Lua plug-in | The project does not claim a specific minimum release |
+| Operating system | Windows or macOS | This fork's recorded live acceptance used Windows |
+| MCP client | Codex, Claude, or another compatible client | PhotoAgent is optional |
+
+## Install (Claude Desktop, 3 steps)
 
 This is the recommended path. Takes ~2 minutes, no terminal needed.
 

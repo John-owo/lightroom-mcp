@@ -2614,3 +2614,26 @@ User replied verbatim `render PASS` to the immediately preceding review of Copy1
   five affected checkouts. Existing LF/CRLF warnings were not normalized.
 - Existing sandbox provisioning failure persists; Windows permissions/sandbox
   settings unchanged. Full restart and new sol_worker discovery not yet run.
+
+## 2026-09-01 - README health-report restructuring (merged from origin/main)
+
+- Used the user-supplied README health report as editorial guidance, then
+  verified every version, tool-count, environment, and acceptance claim against
+  `origin/main`, `server/package.json`, CI, tool contracts, and this work log.
+- Reworked the Traditional Chinese and English READMEs with a short TL;DR,
+  linked contents, feature overview, architecture/data-flow diagram, glossary,
+  quick start, and environment table. Preserved the detailed install, tool,
+  safety, troubleshooting, and RAW workflow material.
+- Verification passed on that publication line: server Jest `15/15` suites and
+  `175/175` tests, `npm.cmd run check`, `npm.cmd run lint`, and
+  `npm.cmd run build`; relative Markdown links and contents anchors resolved.
+
+## 2026-09-01 - README publication to main (merged from origin/main)
+
+- The reviewed README work was fast-forwarded to `John-owo/lightroom-mcp`
+  `main` and subsequently recorded by commit `010800a`. The original publication
+  record identified reviewed scope as `README.md`, `README.en.md`, and
+  `WORKLOG.md`; no release, tag, issue, or Lightroom/photo state was changed.
+- This historical README validation does not establish current T62 runtime or
+  human acceptance. The 2026-09-10 pending-validation checks above cover the
+  current combined source snapshot.

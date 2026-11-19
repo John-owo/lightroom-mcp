@@ -314,7 +314,10 @@ describe('develop setting schema', () => {
 
     expect(properties.settings.additionalProperties).toBe(false);
     expect(properties.settings.minProperties).toBe(1);
-    expect(Object.keys(properties.settings.properties ?? {})).toEqual(DEVELOP_SETTING_KEYS);
+    expect(Object.keys(properties.settings.properties ?? {})).toEqual([
+      ...DEVELOP_SETTING_KEYS,
+      "MaskGroupBasedCorrections",
+    ]);
   });
 
   it('uses numeric coordinate arrays for point-curve settings', () => {

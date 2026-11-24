@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,6 +16,58 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Best-effort command line of a running process, or null when it cannot be
+ * determined (no permission, tool missing, process gone). Only reached on the
+ * lock-contention path, so the slower Windows lookup is acceptable.
+ */
+export function readProcessCommandLine(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try {
+    let out: string;
+    if (process.platform === "win32") {
+      out = execFileSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
+        ],
+        { encoding: "utf8", timeout: 5000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
+      );
+    } else if (process.platform === "linux") {
+      out = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
+    } else {
+      out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+        encoding: "utf8",
+        timeout: 5000,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+    }
+    const trimmed = out.trim();
+    return trimmed === "" ? null : trimmed;
+  } catch {
+    return null;
+  }
+}
+
+const BRIDGE_COMMAND_LINE = /lightroom[-_ ]?mcp/i;
+
+/**
+ * A live PID only counts as a running bridge when its command line looks like
+ * one. Operating systems recycle PIDs, so a stale lock can point at an
+ * unrelated process. When the command line is unknown, assume it is a bridge
+ * (the conservative, pre-existing behaviour).
+ */
+function holderIsBridge(pid: number, commandLineOf: (pid: number) => string | null): boolean {
+  const cmd = commandLineOf(pid);
+  if (cmd === null) return true;
+  if (BRIDGE_COMMAND_LINE.test(cmd)) return true;
+  const entry = process.argv[1];
+  return entry !== undefined && entry !== "" && cmd.includes(entry);
+}
+
 function readPid(pidFile: string): number | null {
   try {
     const raw = fs.readFileSync(pidFile, "utf8").trim();
@@ -29,6 +82,7 @@ export function acquireInstanceLock(
   requestPort: number,
   responsePort: number,
   baseDir = path.join(os.homedir(), ".config", "lightroom-mcp"),
+  commandLineOf: (pid: number) => string | null = readProcessCommandLine,
 ): InstanceLock {
   fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 });
   const lockFile = path.join(baseDir, `bridge-${requestPort}-${responsePort}.lock`);
@@ -46,7 +100,7 @@ export function acquireInstanceLock(
       }
 
       const existingPid = readPid(lockFile);
-      if (existingPid && pidIsAlive(existingPid)) {
+      if (existingPid && pidIsAlive(existingPid) && holderIsBridge(existingPid, commandLineOf)) {
         throw new Error(
           `Another Lightroom MCP bridge is already running for ports ${requestPort}/${responsePort} (pid ${existingPid})`,
         );

@@ -1539,3 +1539,65 @@ Unverified boundaries:
 - Read-only `git ls-remote origin refs/heads/main` returned full SHA
   `9a619e8a4d0fd72ee9f71e0ef2f1093c4709e125`, exactly matching the local
   reviewed commit.
+
+## 2026-11-24 - stale bridge lock fix + Codex Lightroom skills (handoff Claude Code -> Codex)
+
+**Handoff state: READY (outgoing: Claude Code, target: Codex), 2026-11-24 21:03 +08:00.**
+Claude Code owns no running tool, subagent, background process or bridge lock;
+the workspace is released. Not yet accepted by Codex. Lightroom Classic is open
+with the plugin listening on 58763/58764 and has no bridge client attached:
+exactly one agent may own the Lightroom bridge/catalog at a time (Codex next).
+
+Workspace: `D:\work\lightroom-mcp`, branch `feat/set-develop-masks`, HEAD
+`d8c83f9`. Rules: `CLAUDE.md` (`AGENTS.md` points to it). Uncommitted, nothing
+staged, nothing untracked: `server/src/instance-lock.ts`,
+`server/tests/instance-lock.test.ts`. `server/dist/` was rebuilt (`npm run build`).
+No commit/push was requested or made.
+
+Goal / user decisions: Codex should also have the Lightroom MCP + web
+reference-photo tone matching; then the user asked to fix the lock bug and hand
+off to Codex.
+
+Root cause: `server/src/instance-lock.ts` treated a lock as live whenever
+`process.kill(pid, 0)` succeeded. Windows recycled PID 27060 (a Codex renderer),
+so the bridge refused to start (`CONNECTION_CLOSED` in Claude Code). Stale lock
+file was deleted by hand earlier.
+
+Fix (done): a live PID now only blocks when its command line looks like a bridge
+(`/lightroom[-_ ]?mcp/i` or contains `process.argv[1]`). New exported
+`readProcessCommandLine(pid)` (Windows: PowerShell `Get-CimInstance`; Linux:
+`/proc/<pid>/cmdline`; macOS: `ps`); unknown command line stays conservative
+(treated as live). `acquireInstanceLock` got an optional 4th parameter
+`commandLineOf` for tests. Lock file format unchanged (`<pid>\n`).
+
+Verification (local): `npm run check` OK, `npm run lint` OK, `npm run build` OK,
+full Jest 15/15 suites, 179/179 tests (instance-lock suite 10/10, +4 new:
+recycled-PID replaced, unknown command line keeps lock, command line of current
+process, invalid PID). Live check: planted a lock pointing at live `explorer.exe`;
+the rebuilt server started, listed 20 tools and read Lightroom collections.
+Not tested: macOS/Linux paths of `readProcessCommandLine` (CI matrix covers
+them), Windows lookup cost on slow machines (5 s timeout, only on contention).
+Already-running MCP servers still use old code until restarted.
+
+Outside the repo (same session, done): Codex skills `lightroom-mcp-ops` and
+`photo-reference-tone` (with `scripts/tone_stats.py`, `references/lr-mapping.md`)
+in `C:\Users\wu970\.codex\skills\`; `raw-photo-lightroom-preset` there replaced
+with this repo's v2 (old copy in `C:\Users\wu970\.codex\skills-backup\`);
+`web_search = "live"` added to `C:\Users\wu970\.codex\config.toml` (backup
+`config.toml.before-websearch-20261124.bak`). Codex CLI (`codex exec`) could not
+verify them: the configured model `gpt-6.2-sol` is rejected with a ChatGPT
+account (`model_not_found`); config left untouched. Codex has not yet been seen
+reading these skills or calling the Lightroom tools.
+
+Next steps for Codex:
+1. Read this entry, `CLAUDE.md`; check `git status`/HEAD match the above.
+2. Restart the Codex session so the rebuilt `server/dist` is used; verify the
+   `lightroom` tools are callable (read-only `list_collections`; wait ~4 s after
+   start if it says "not connected").
+3. Confirm the new skills are listed in Codex; try `photo-reference-tone` on a
+   disposable photo using a Workflow Copy (never a Master).
+4. Ask the user whether to commit the lock fix (message idea: "fix: verify lock
+   holder command line to survive PID reuse"); do not push without approval.
+
+Caveat for Claude Code later: its own `lightroom` MCP connection from this
+session is dead; restart the Claude session after Codex releases the bridge.

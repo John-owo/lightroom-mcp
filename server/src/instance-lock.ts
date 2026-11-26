@@ -16,17 +16,39 @@ function pidIsAlive(pid: number): boolean {
   }
 }
 
+export interface CommandLineProbes {
+  platform: NodeJS.Platform;
+  run: (file: string, args: string[], timeoutMs: number) => string;
+  readFile: (file: string) => string;
+}
+
+const defaultProbes: CommandLineProbes = {
+  platform: process.platform,
+  run: (file, args, timeoutMs) =>
+    execFileSync(file, args, {
+      encoding: "utf8",
+      timeout: timeoutMs,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    }),
+  readFile: (file) => fs.readFileSync(file, "utf8"),
+};
+
 /**
  * Best-effort command line of a running process, or null when it cannot be
  * determined (no permission, tool missing, process gone). Only reached on the
- * lock-contention path, so the slower Windows lookup is acceptable.
+ * lock-contention path, so the slower Windows lookup is acceptable. The probes
+ * are injectable so every platform branch can be tested on any OS.
  */
-export function readProcessCommandLine(pid: number): string | null {
+export function readProcessCommandLine(
+  pid: number,
+  probes: CommandLineProbes = defaultProbes,
+): string | null {
   if (!Number.isInteger(pid) || pid <= 0) return null;
   try {
     let out: string;
-    if (process.platform === "win32") {
-      out = execFileSync(
+    if (probes.platform === "win32") {
+      out = probes.run(
         "powershell.exe",
         [
           "-NoProfile",
@@ -34,16 +56,12 @@ export function readProcessCommandLine(pid: number): string | null {
           "-Command",
           `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
         ],
-        { encoding: "utf8", timeout: 20000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
+        20000,
       );
-    } else if (process.platform === "linux") {
-      out = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");
+    } else if (probes.platform === "linux") {
+      out = probes.readFile(`/proc/${pid}/cmdline`).replaceAll("\0", " ");
     } else {
-      out = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
-        encoding: "utf8",
-        timeout: 5000,
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      out = probes.run("ps", ["-p", String(pid), "-o", "command="], 5000);
     }
     const trimmed = out.trim();
     return trimmed === "" ? null : trimmed;

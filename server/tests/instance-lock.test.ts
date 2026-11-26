@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   acquireInstanceLock,
   readProcessCommandLine,
+  type CommandLineProbes,
   type InstanceLock,
 } from "../src/instance-lock.js";
 
@@ -63,6 +64,74 @@ describe("instance lock", () => {
     expect(typeof cmd).toBe("string");
     expect(cmd).not.toBe("");
   }, 30000);
+
+  describe("readProcessCommandLine platform probes", () => {
+    const probes = (
+      platform: NodeJS.Platform,
+      overrides: Partial<CommandLineProbes> = {},
+    ): CommandLineProbes => ({
+      platform,
+      run: () => "",
+      readFile: () => "",
+      ...overrides,
+    });
+
+    it("queries PowerShell on win32", () => {
+      const calls: string[][] = [];
+      const cmd = readProcessCommandLine(
+        42,
+        probes("win32", {
+          run: (file, args) => {
+            calls.push([file, ...args]);
+            return "node lightroom-mcp\\index.js\r\n";
+          },
+        }),
+      );
+
+      expect(cmd).toBe("node lightroom-mcp\\index.js");
+      expect(calls[0]?.[0]).toBe("powershell.exe");
+      expect(calls[0]?.join(" ")).toContain("ProcessId=42");
+    });
+
+    it("reads /proc cmdline on linux and turns NULs into spaces", () => {
+      const files: string[] = [];
+      const cmd = readProcessCommandLine(
+        7,
+        probes("linux", {
+          readFile: (file) => {
+            files.push(file);
+            return "node\0server.js\0";
+          },
+        }),
+      );
+
+      expect(cmd).toBe("node server.js");
+      expect(files).toEqual(["/proc/7/cmdline"]);
+    });
+
+    it("uses ps on other platforms", () => {
+      const cmd = readProcessCommandLine(
+        9,
+        probes("darwin", { run: (file, args) => `${file} ${args.join(" ")}\n` }),
+      );
+
+      expect(cmd).toBe("ps -p 9 -o command=");
+    });
+
+    it("returns null when the probe output is empty or the probe throws", () => {
+      expect(readProcessCommandLine(5, probes("win32", { run: () => "  \n" }))).toBeNull();
+      expect(
+        readProcessCommandLine(
+          5,
+          probes("linux", {
+            readFile: () => {
+              throw new Error("ENOENT");
+            },
+          }),
+        ),
+      ).toBeNull();
+    });
+  });
 
   it("returns null for an invalid PID", () => {
     expect(readProcessCommandLine(0)).toBeNull();

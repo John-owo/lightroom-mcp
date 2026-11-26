@@ -22,6 +22,31 @@ interface Harness {
 
 const TOKEN = "identity-integration-token";
 
+const MASKED_CORRECTION = {
+  What: "Correction",
+  CorrectionName: "x",
+  CorrectionAmount: 1,
+  CorrectionActive: true,
+  LocalExposure2012: 0.12,
+  CorrectionMasks: [
+    {
+      What: "Mask/CircularGradient",
+      MaskActive: true,
+      MaskValue: 1,
+      Top: 0.2,
+      Left: 0.12,
+      Bottom: 0.54,
+      Right: 0.48,
+      Angle: 0,
+      Midpoint: 50,
+      Feather: 85,
+      Flipped: true,
+      Roundness: 0,
+      Version: 2,
+    },
+  ],
+};
+
 async function waitFor(check: () => boolean, timeoutMs: number, label: string): Promise<void> {
   const start = Date.now();
   while (!check()) {
@@ -87,6 +112,22 @@ async function startHarness(): Promise<Harness> {
       master_id: master.catalog_id,
       master_uuid: master.uuid,
       virtual_copy_count: 0,
+    },
+    "200": {
+      ...master,
+      catalog_id: "200",
+      uuid: "uuid-no-masks",
+      developSettings: { exposure: 0, MaskGroupBasedCorrections: [], maskReadback: "absent" },
+    },
+    "201": {
+      ...master,
+      catalog_id: "201",
+      uuid: "uuid-masks",
+      developSettings: {
+        exposure: 0,
+        MaskGroupBasedCorrections: [MASKED_CORRECTION],
+        maskReadback: "ok",
+      },
     },
     "999": {
       ...master,
@@ -196,5 +237,38 @@ describe("persistent photo identity across MCP and plugin transports", () => {
       name: "get_photo_metadata",
       arguments: { photo_id: "999" },
     })).rejects.toThrow(/structured content does not match/i);
+  }, 20_000);
+
+  it("passes mask readback through structured content unchanged", async () => {
+    harness = await startHarness();
+    const listed = await harness.client.listTools();
+    const metadataTool = listed.tools.find((tool) => tool.name === "get_photo_metadata");
+    expect(metadataTool?._meta?.["io.github.john-owo.lightroom-mcp/mask-readback"]).toEqual({
+      version: 1,
+      field: "developSettings.MaskGroupBasedCorrections",
+    });
+
+    const empty = (await harness.client.callTool({
+      name: "get_photo_metadata",
+      arguments: { photo_id: "200" },
+    })) as ToolResult;
+    expect(empty.isError).toBeFalsy();
+    expect(empty.structuredContent?.developSettings).toEqual({
+      exposure: 0,
+      MaskGroupBasedCorrections: [],
+      maskReadback: "absent",
+    });
+
+    const masked = (await harness.client.callTool({
+      name: "get_photo_metadata",
+      arguments: { photo_id: "201" },
+    })) as ToolResult;
+    expect(masked.isError).toBeFalsy();
+    expect(masked.structuredContent?.developSettings).toEqual({
+      exposure: 0,
+      MaskGroupBasedCorrections: [MASKED_CORRECTION],
+      maskReadback: "ok",
+    });
+    expect(JSON.parse(masked.content[0].text)).toEqual(masked.structuredContent);
   }, 20_000);
 });

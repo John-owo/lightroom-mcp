@@ -1601,3 +1601,53 @@ Next steps for Codex:
 
 Caveat for Claude Code later: its own `lightroom` MCP connection from this
 session is dead; restart the Claude session after Codex releases the bridge.
+
+## 2026-11-27 - mask readback for get_photo_metadata (Claude Code, worktree)
+
+Time: 2026-11-27 (+08:00). The user explicitly authorized Claude Code to take
+over the lightroom-mcp mask work. Codex had accepted the 2026-11-24 handoff
+without a recorded release, so this work was isolated in worktree
+`D:\work\lightroom-mcp-masks` on new branch `feat/mask-readback` (based on
+`feat/set-develop-masks` @ `e817665`). Codex's checkout `D:\work\lightroom-mcp`
+(with its uncommitted WORKLOG edit) was not touched. Lightroom was not started
+or contacted. Nothing pushed; no PR.
+
+Changes:
+- `HandlerMetadata.lua`: `get_photo_metadata` now returns
+  `developSettings.MaskGroupBasedCorrections` (bounded deep clone of
+  `photo:getDevelopSettings().MaskGroupBasedCorrections`: string/number/boolean/
+  table only, depth 8, 20000 nodes, no cycles, no sparse or mixed-key arrays,
+  no NaN/inf) plus `developSettings.maskReadback`: `ok` (cloned), `absent`
+  (Lightroom exposed no table; `[]` returned), `unsupported_values` (field
+  omitted; the call still succeeds).
+- `JSON.lua`: `JSON.array()` tags a table so it encodes as a JSON array even
+  when empty (`[]` instead of `{}`); used for the mask list and every
+  `CorrectionMasks`.
+- `HandlerDevelop.lua`: `MaskGroupBasedCorrections` writes are validated: dense
+  array, max 50 corrections, each `What == "Correction"` with scalar fields
+  except `CorrectionMasks` (1-50 entries, each `What` in
+  `Mask/CircularGradient` / `Mask/Gradient`, scalar fields only). Brush
+  (`Mask/Paint`), AI/range masks and nested tables such as
+  `CorrectionRangeMask` are rejected before catalog write. `[]` still clears.
+- Server: `_meta["io.github.john-owo.lightroom-mcp/mask-readback"] =
+  { version: 1, field: "developSettings.MaskGroupBasedCorrections" }` on the
+  `get_photo_metadata` listing (new optional `extraMeta` on `ToolContract`);
+  output schema types `developSettings.MaskGroupBasedCorrections` (array) and
+  `maskReadback` (enum), other develop fields stay additive; the
+  `set_develop_settings` input schema mirrors the Lua write constraints.
+
+Verification (local, Windows): `npm run check` OK, `npm run lint` OK,
+`npm run build` OK, Jest 15/15 suites, 185/185 tests (new: `_meta` key,
+output schema accepts `[]`/masks and rejects `{}`, write schema accepts
+radial+linear and rejects `Mask/Paint`, `Mask/Image`, `CorrectionRangeMask`,
+>50 corrections; MCP round-trip of empty and populated mask readback).
+Lua specs were added (`HandlerMetadata_spec`, `HandlerDevelop_spec`,
+`JSON_spec`) but NOT run: no `lua`/`busted`/`selene`/`mise` on this machine,
+so `mise run lua:test` and `mise run lua:lint` are unverified locally (CI
+`lua-test.yml` / `lua-lint.yml` cover them).
+
+Not verified: live Lightroom readback. Whether `photo:getDevelopSettings()`
+actually exposes `MaskGroupBasedCorrections` in the user's Lightroom Classic
+version is unknown; if it does not, the field reads `[]` with
+`maskReadback = "absent"`, which a client must not treat as proof that the
+photo has no masks before a replace-all write.

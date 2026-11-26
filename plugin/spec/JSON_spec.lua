@@ -20,4 +20,12 @@ describe("JSON", function()
 
         assert.are.equal("C:\\new\\test\\raw", decoded.path)
     end)
+
+    it("encodes tables tagged with JSON.array as arrays, even when empty", function()
+        assert.are.equal('{"a":[]}', JSON:encode({ a = JSON.array({}) }))
+        assert.are.equal('[1,2]', JSON:encode(JSON.array({ 1, 2 })))
+        assert.are.equal('{}', JSON:encode({}))
+        assert.is_true(JSON.isArray(JSON.array()))
+        assert.is_false(JSON.isArray({}))
+    end)
 end)

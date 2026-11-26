@@ -1,10 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
 import fs from 'node:fs';
+import { AjvJsonSchemaValidator } from '@modelcontextprotocol/sdk/validation/ajv';
 import path from 'node:path';
 import { TOOL_DEFINITIONS, listToolsHandler } from '../src/list-tools-handler.js';
 import {
   DEVELOP_CURVE_SETTING_KEYS,
   DEVELOP_SETTING_KEYS,
+  MASK_READBACK_META_KEY,
   OPERATION_SEMANTICS,
   OPERATION_SEMANTICS_META_KEY,
   TOOL_CONTRACTS,
@@ -58,12 +60,13 @@ describe('TOOL_DEFINITIONS', () => {
 
   it('is generated from tool contracts', () => {
     expect(TOOL_DEFINITIONS).toEqual(
-      TOOL_CONTRACTS.map(({ name, description, inputSchema, outputSchema, operationSemantics }) => ({
+      TOOL_CONTRACTS.map(({ name, description, inputSchema, outputSchema, extraMeta, operationSemantics }) => ({
         name,
         description,
         inputSchema,
         ...(outputSchema ? { outputSchema } : {}),
         _meta: {
+          ...extraMeta,
           [OPERATION_SEMANTICS_META_KEY]: operationSemantics,
         },
       })),
@@ -418,5 +421,112 @@ describe('MCP operation semantics', () => {
       retry_policy: 'readback_before_retry',
       requires_active_selection: false,
     });
+  });
+});
+
+describe('mask readback and geometric mask writes', () => {
+  const validator = new AjvJsonSchemaValidator();
+
+  const radialMask = {
+    What: 'Mask/CircularGradient',
+    MaskActive: true,
+    MaskValue: 1,
+    Top: 0.2,
+    Left: 0.12,
+    Bottom: 0.54,
+    Right: 0.48,
+    Angle: 0,
+    Midpoint: 50,
+    Feather: 85,
+    Flipped: true,
+    Roundness: 0,
+    Version: 2,
+  };
+  const linearMask = {
+    What: 'Mask/Gradient',
+    MaskActive: true,
+    MaskValue: 1,
+    ZeroX: 0.5,
+    ZeroY: 0.8,
+    FullX: 0.5,
+    FullY: 1,
+    Version: 2,
+  };
+  const correction = (masks: unknown[]) => ({
+    What: 'Correction',
+    CorrectionName: 'x',
+    CorrectionAmount: 1,
+    CorrectionActive: true,
+    LocalExposure2012: 0.12,
+    CorrectionMasks: masks,
+  });
+
+  function validateSetDevelopSettings(masks: unknown) {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'set_develop_settings');
+    if (!tool) throw new Error('set_develop_settings missing');
+    return validator.getValidator(tool.inputSchema as Parameters<typeof validator.getValidator>[0])({
+      photo_id: '1',
+      settings: { MaskGroupBasedCorrections: masks },
+    });
+  }
+
+  it('advertises mask readback on get_photo_metadata _meta only', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'get_photo_metadata');
+    const meta = tool?._meta as Record<string, unknown> | undefined;
+
+    expect(meta?.[MASK_READBACK_META_KEY]).toEqual({
+      version: 1,
+      field: 'developSettings.MaskGroupBasedCorrections',
+    });
+    expect(MASK_READBACK_META_KEY).toBe('io.github.john-owo.lightroom-mcp/mask-readback');
+    expect(meta?.[OPERATION_SEMANTICS_META_KEY]).toBeDefined();
+
+    for (const other of TOOL_DEFINITIONS.filter((t) => t.name !== 'get_photo_metadata')) {
+      expect((other._meta as Record<string, unknown>)[MASK_READBACK_META_KEY]).toBeUndefined();
+    }
+  });
+
+  it('types the mask readback in the get_photo_metadata output schema', () => {
+    const tool = TOOL_DEFINITIONS.find((t) => t.name === 'get_photo_metadata');
+    if (!tool?.outputSchema) throw new Error('outputSchema missing');
+    const validate = validator.getValidator(tool.outputSchema as Parameters<typeof validator.getValidator>[0]);
+    const identity = { catalog_id: '7', uuid: 'uuid-7', is_virtual_copy: false, virtual_copy_count: 0 };
+
+    expect(validate({
+      ...identity,
+      developSettings: { exposure: 0, MaskGroupBasedCorrections: [], maskReadback: 'absent' },
+    }).valid).toBe(true);
+    expect(validate({
+      ...identity,
+      developSettings: { MaskGroupBasedCorrections: [correction([radialMask])], maskReadback: 'ok' },
+    }).valid).toBe(true);
+    expect(validate({
+      ...identity,
+      developSettings: { maskReadback: 'unsupported_values' },
+    }).valid).toBe(true);
+    // Lua's ambiguous empty table must never reach clients as an object.
+    expect(validate({
+      ...identity,
+      developSettings: { MaskGroupBasedCorrections: {} },
+    }).valid).toBe(false);
+  });
+
+  it('accepts radial and linear gradient corrections', () => {
+    expect(validateSetDevelopSettings([correction([radialMask]), correction([linearMask])]).valid).toBe(true);
+    expect(validateSetDevelopSettings([]).valid).toBe(true);
+  });
+
+  it('rejects brush, AI and range masks', () => {
+    expect(validateSetDevelopSettings([correction([radialMask, { What: 'Mask/Paint', MaskValue: 1 }])]).valid)
+      .toBe(false);
+    expect(validateSetDevelopSettings([correction([{ What: 'Mask/Image', MaskSubType: 1 }])]).valid).toBe(false);
+    expect(validateSetDevelopSettings([{ ...correction([radialMask]), CorrectionRangeMask: { Type: 1 } }]).valid)
+      .toBe(false);
+  });
+
+  it('rejects non-correction items, empty mask lists and more than 50 corrections', () => {
+    expect(validateSetDevelopSettings([{ ...correction([radialMask]), What: 'Other' }]).valid).toBe(false);
+    expect(validateSetDevelopSettings([correction([])]).valid).toBe(false);
+    expect(validateSetDevelopSettings(Array.from({ length: 51 }, () => correction([radialMask]))).valid).toBe(false);
   });
 });

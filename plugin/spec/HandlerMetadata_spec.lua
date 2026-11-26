@@ -244,3 +244,94 @@ describe("HandlerMetadata.getPhotoMetadata", function()
         assert.has_error(function() Handler.getPhotoMetadata({}) end)
     end)
 end)
+
+describe("HandlerMetadata.getPhotoMetadata mask readback", function()
+    local JSON = require 'JSON'
+
+    local function radialCorrection()
+        return {
+            What = "Correction",
+            CorrectionName = "x",
+            CorrectionAmount = 1,
+            CorrectionActive = true,
+            LocalExposure2012 = 0.12,
+            CorrectionMasks = {
+                {
+                    What = "Mask/CircularGradient",
+                    MaskActive = true,
+                    MaskValue = 1,
+                    Top = 0.2, Left = 0.12, Bottom = 0.54, Right = 0.48,
+                    Angle = 0, Midpoint = 50, Feather = 85,
+                    Flipped = true, Roundness = 0, Version = 2,
+                },
+            },
+        }
+    end
+
+    local function metadataFor(developSettings)
+        local photo = helper.fakePhoto({
+            id = "7",
+            path = "/m.jpg",
+            fileName = "m.jpg",
+            isVirtualCopy = false,
+            developSettings = developSettings,
+        })
+        local _, Handler = setup({ photo })
+        return Handler.getPhotoMetadata({ photo_id = "7" })
+    end
+
+    it("returns an empty JSON array when the photo has no masks", function()
+        local r = metadataFor({ Exposure2012 = 0 })
+
+        assert.are.same({}, r.developSettings.MaskGroupBasedCorrections)
+        assert.are.equal("absent", r.developSettings.maskReadback)
+        assert.is_not_nil(JSON:encode(r):find('"MaskGroupBasedCorrections":[]', 1, true))
+    end)
+
+    it("returns a deep clone of existing masks", function()
+        local source = { radialCorrection() }
+        local r = metadataFor({ MaskGroupBasedCorrections = source })
+        local masks = r.developSettings.MaskGroupBasedCorrections
+
+        assert.are.equal("ok", r.developSettings.maskReadback)
+        assert.are.same(source, masks)
+        assert.are_not.equal(source, masks)
+        assert.are_not.equal(source[1].CorrectionMasks, masks[1].CorrectionMasks)
+
+        local decoded = JSON:decode(JSON:encode(r))
+        local mask = decoded.developSettings.MaskGroupBasedCorrections[1].CorrectionMasks[1]
+        assert.are.equal("Mask/CircularGradient", mask.What)
+        assert.is_true(mask.Flipped)
+    end)
+
+    it("encodes empty CorrectionMasks as a JSON array", function()
+        local correction = radialCorrection()
+        correction.CorrectionMasks = {}
+        local r = metadataFor({ MaskGroupBasedCorrections = { correction } })
+
+        assert.are.equal("ok", r.developSettings.maskReadback)
+        assert.is_not_nil(JSON:encode(r):find('"CorrectionMasks":[]', 1, true))
+    end)
+
+    it("marks unserializable mask tables instead of failing the call", function()
+        local correction = radialCorrection()
+        correction.Callback = function() end
+        local r = metadataFor({ MaskGroupBasedCorrections = { correction } })
+
+        assert.is_nil(r.developSettings.MaskGroupBasedCorrections)
+        assert.are.equal("unsupported_values", r.developSettings.maskReadback)
+        assert.are.equal("/m.jpg", r.path)
+    end)
+
+    it("rejects sparse arrays and non-finite numbers", function()
+        local sparse = metadataFor({
+            MaskGroupBasedCorrections = { [1] = radialCorrection(), [3] = radialCorrection() },
+        })
+        assert.are.equal("unsupported_values", sparse.developSettings.maskReadback)
+
+        local correction = radialCorrection()
+        correction.LocalExposure2012 = 0 / 0
+        local nan = metadataFor({ MaskGroupBasedCorrections = { correction } })
+        assert.are.equal("unsupported_values", nan.developSettings.maskReadback)
+    end)
+end)

@@ -62,7 +62,7 @@ describe("instance lock", () => {
 
     expect(typeof cmd).toBe("string");
     expect(cmd).not.toBe("");
-  });
+  }, 30000);
 
   it("returns null for an invalid PID", () => {
     expect(readProcessCommandLine(0)).toBeNull();

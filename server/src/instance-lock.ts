@@ -34,7 +34,7 @@ export function readProcessCommandLine(pid: number): string | null {
           "-Command",
           `(Get-CimInstance Win32_Process -Filter "ProcessId=${pid}").CommandLine`,
         ],
-        { encoding: "utf8", timeout: 5000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
+        { encoding: "utf8", timeout: 20000, windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
       );
     } else if (process.platform === "linux") {
       out = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replaceAll("\0", " ");

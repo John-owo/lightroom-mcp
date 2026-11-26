@@ -1651,3 +1651,16 @@ actually exposes `MaskGroupBasedCorrections` in the user's Lightroom Classic
 version is unknown; if it does not, the field reads `[]` with
 `maskReadback = "absent"`, which a client must not treat as proof that the
 photo has no masks before a replace-all write.
+
+Follow-up verification (same day, Claude Code main session): the plugin Lua was
+syntax-checked with `luaparse` 0.3.1 (Lua 5.1 grammar) for every file in
+`plugin/LightroomMCP.lrplugin` and the three changed specs: all OK. The specs
+were then executed under fengari (Lua 5.3 in JavaScript, via
+`fengari-node-cli` 0.1.0) with a minimal busted-compatible shim kept outside
+the repository: `JSON_spec` 4/4, `HandlerMetadata_spec` 17/17,
+`HandlerDevelop_spec` 33/33 passed. Across all specs the shim run gave 139
+passed / 27 failed, all 27 in the unchanged `PluginInfoProvider_spec` because
+fengari has no `io.open`; a deliberately failing spec confirmed the shim
+reports failures. This is not a substitute for CI's real Lua 5.1/busted/selene
+run. The new plugin was not installed into Lightroom's Modules folder and no
+live Lightroom call was made.

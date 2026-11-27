@@ -1664,3 +1664,23 @@ fengari has no `io.open`; a deliberately failing spec confirmed the shim
 reports failures. This is not a substitute for CI's real Lua 5.1/busted/selene
 run. The new plugin was not installed into Lightroom's Modules folder and no
 live Lightroom call was made.
+
+## 2026-11-27 rename_virtual_copy (branch feat/virtual-copy-rename)
+
+Requested via photo-agent: Workflow Copies should read `v1`, `v2`, ... in
+Lightroom instead of `Lightroom MCP VC [operation-id]`.
+
+- `HandlerVirtualCopy.renameVirtualCopy` + `rename_virtual_copy` contract:
+  inputs `photo_id`, `expected_uuid`, `expected_copy_name`, `copy_name`
+  (1-64 chars, no control chars or outer spaces). Compare-and-set on the
+  current Copy Name, `unchanged` when already renamed, REVIEW_REQUIRED when the
+  name differs, Masters and UUID mismatches rejected, readback after the write.
+  The caller must persist the Copy's catalog ID/UUID first: after the rename
+  the operation marker no longer finds the Copy.
+- Server: build, lint, Jest 15 suites / 187 tests passed (tool count 20 -> 21).
+- Lua specs: four new cases in `HandlerVirtualCopy_spec.lua`, not executed
+  (no Lua runtime here; fengari download was blocked).
+- Live: installed into Lightroom Classic; renamed Copy 138940 from its marker
+  to `rename-test`, then photo-agent renamed new copies to `v1`/`v2`. After the
+  restart the plug-in server did not start on its own and was started by hand
+  in Plug-in Manager; cause not investigated.

@@ -546,3 +546,99 @@ describe("HandlerDevelop.setDevelopSettings", function()
         assert.is_nil(p.getRawMetadata(p, "__appliedSettings"))
     end)
 end)
+
+describe("HandlerDevelop.setDevelopSettings MaskGroupBasedCorrections", function()
+    local function correction(masks)
+        return {
+            What = "Correction",
+            CorrectionName = "x",
+            CorrectionAmount = 1,
+            CorrectionActive = true,
+            LocalExposure2012 = 0.12,
+            CorrectionMasks = masks,
+        }
+    end
+
+    local function radialMask()
+        return {
+            What = "Mask/CircularGradient",
+            MaskActive = true,
+            MaskValue = 1,
+            Top = 0.2, Left = 0.12, Bottom = 0.54, Right = 0.48,
+            Angle = 0, Midpoint = 50, Feather = 85,
+            Flipped = true, Roundness = 0, Version = 2,
+        }
+    end
+
+    local function linearMask()
+        return {
+            What = "Mask/Gradient",
+            MaskActive = true,
+            MaskValue = 1,
+            ZeroX = 0.5, ZeroY = 0.8, FullX = 0.5, FullY = 1,
+            Version = 2,
+        }
+    end
+
+    local function attempt(masks)
+        local p = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        local catalog, Handler = setup({ photos = { p } })
+        local ok, err = pcall(Handler.setDevelopSettings, {
+            photo_id = "1",
+            settings = { MaskGroupBasedCorrections = masks },
+        })
+        return ok, err, catalog, p
+    end
+
+    it("accepts radial and linear gradient corrections", function()
+        local masks = { correction({ radialMask() }), correction({ linearMask() }) }
+        local ok, err, catalog, p = attempt(masks)
+
+        assert.is_true(ok, tostring(err))
+        assert.are.equal(1, catalog.getWriteAccessCount())
+        assert.are.same({ MaskGroupBasedCorrections = masks }, p.getRawMetadata(p, "__appliedSettings"))
+    end)
+
+    it("accepts an empty array to clear all masks", function()
+        local ok, err = attempt({})
+        assert.is_true(ok, tostring(err))
+    end)
+
+    it("rejects brush (Mask/Paint) masks before catalog write", function()
+        local ok, err, catalog, p = attempt({
+            correction({ radialMask(), { What = "Mask/Paint", MaskValue = 1 } }),
+        })
+
+        assert.is_false(ok)
+        assert.matches("Mask/Paint is not supported", tostring(err), 1, true)
+        assert.are.equal(0, catalog.getWriteAccessCount())
+        assert.is_nil(p.getRawMetadata(p, "__appliedSettings"))
+    end)
+
+    it("rejects AI / range masks and nested range tables", function()
+        local ok, err = attempt({ correction({ { What = "Mask/Image", MaskSubType = 1 } }) })
+        assert.is_false(ok)
+        assert.matches("only Mask/CircularGradient and Mask/Gradient", tostring(err), 1, true)
+
+        local ranged = correction({ radialMask() })
+        ranged.CorrectionRangeMask = { Type = 1 }
+        ok, err = attempt({ ranged })
+        assert.is_false(ok)
+        assert.matches("CorrectionRangeMask", tostring(err), 1, true)
+    end)
+
+    it("rejects non-correction items, missing masks, and too many corrections", function()
+        local bad = correction({ radialMask() })
+        bad.What = "Something"
+        assert.is_false((attempt({ bad })))
+        assert.is_false((attempt({ correction({}) })))
+        assert.is_false((attempt({ correction(nil) })))
+        assert.is_false((attempt({ What = "Correction" })))
+
+        local tooMany = {}
+        for i = 1, 51 do tooMany[i] = correction({ radialMask() }) end
+        local ok, err = attempt(tooMany)
+        assert.is_false(ok)
+        assert.matches("at most 50 corrections", tostring(err), 1, true)
+    end)
+end)

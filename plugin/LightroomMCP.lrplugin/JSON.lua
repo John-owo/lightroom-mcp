@@ -1,6 +1,21 @@
 -- Simple JSON encoder/decoder for Lightroom
 local JSON = {}
 
+-- Lua cannot tell an empty array from an empty object. Tables tagged with
+-- JSON.array() always encode as JSON arrays (including `[]` when empty).
+-- The marker lives in a metatable field (not metatable identity) so it
+-- survives the module being reloaded via package.loaded in specs.
+local ARRAY_MARKER = "__lightroom_mcp_json_array"
+
+function JSON.array(t)
+    return setmetatable(t or {}, { [ARRAY_MARKER] = true })
+end
+
+function JSON.isArray(t)
+    local mt = type(t) == "table" and getmetatable(t) or nil
+    return type(mt) == "table" and rawget(mt, ARRAY_MARKER) == true
+end
+
 function JSON:encode(obj)
     local function encode_value(v)
         local t = type(v)
@@ -9,7 +24,7 @@ function JSON:encode(obj)
         elseif t == "number" or t == "boolean" then
             return tostring(v)
         elseif t == "table" then
-            local is_array = #v > 0
+            local is_array = JSON.isArray(v) or #v > 0
             if is_array then
                 local values = {}
                 for i, item in ipairs(v) do

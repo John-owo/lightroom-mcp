@@ -560,4 +560,82 @@ function VirtualCopyHandler.createVirtualCopy(args)
     }
 end
 
+local MAX_COPY_NAME_LENGTH = 64
+
+local function isValidCopyName(name)
+    return type(name) == "string"
+        and #name >= 1
+        and #name <= MAX_COPY_NAME_LENGTH
+        and name:find("%c") == nil
+        and name:match("^%s") == nil
+        and name:match("%s$") == nil
+end
+
+-- Rename one identity-verified Virtual Copy, e.g. from its operation marker to
+-- a short display name such as "v2". The caller must already have persisted
+-- the Copy's catalog ID and UUID: after the rename, the marker no longer
+-- identifies the Copy. The rename is compare-and-set on the current name and
+-- idempotent when the Copy already carries the requested name.
+function VirtualCopyHandler.renameVirtualCopy(args)
+    if type(args) ~= "table" then error("Arguments must be an object", 0) end
+    if type(args.photo_id) ~= "string" or args.photo_id == "" then
+        error("photo_id is required", 0)
+    end
+    if type(args.expected_uuid) ~= "string" or args.expected_uuid == "" then
+        error("expected_uuid is required", 0)
+    end
+    if type(args.expected_copy_name) ~= "string" then
+        error("expected_copy_name is required", 0)
+    end
+    if not isValidCopyName(args.copy_name) then
+        error("copy_name must be 1-64 characters without control characters or outer spaces", 0)
+    end
+
+    local catalog = LrApplication.activeCatalog()
+    local photo = PhotoLookup.resolveOne(catalog, args.photo_id)
+    if not photo then error("Photo not found: " .. args.photo_id, 0) end
+
+    local before
+    catalog:withReadAccessDo(function()
+        before = publicIdentity(photo)
+    end)
+    if not usableIdentity(before) then
+        error("Photo has incomplete persistent identity", 0)
+    end
+    if before.uuid ~= args.expected_uuid then error("UUID mismatch", 0) end
+    if before.is_virtual_copy ~= true then
+        error("Only a Virtual Copy can be renamed", 0)
+    end
+    if before.copy_name == args.copy_name then
+        return { result = "unchanged", copy = before, previous_copy_name = before.copy_name }
+    end
+    if before.copy_name ~= args.expected_copy_name then
+        return {
+            result = "REVIEW_REQUIRED",
+            reason = "Copy name changed since it was read; refusing to rename",
+            copy = before,
+            previous_copy_name = before.copy_name,
+        }
+    end
+
+    catalog:withWriteAccessDo("Rename Virtual Copy", function()
+        photo:setRawMetadata('copyName', args.copy_name)
+    end)
+
+    local after
+    catalog:withReadAccessDo(function()
+        after = publicIdentity(photo)
+    end)
+    if not after or after.copy_name ~= args.copy_name or after.uuid ~= before.uuid then
+        return {
+            result = "REVIEW_REQUIRED",
+            reason = "Lightroom did not report the requested copy name after the rename",
+            copy = after,
+            previous_copy_name = before.copy_name,
+        }
+    end
+    Log.info(string.format("Renamed Virtual Copy %s to %s", args.photo_id, args.copy_name))
+    return { result = "renamed", copy = after, previous_copy_name = before.copy_name }
+end
+
 return VirtualCopyHandler

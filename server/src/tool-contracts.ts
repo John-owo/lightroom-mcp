@@ -497,6 +497,33 @@ const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
     inputSchema: workflowCopyInputSchema,
   },
   {
+    name: "rename_virtual_copy",
+    luaHandler: "HandlerVirtualCopy.renameVirtualCopy",
+    description:
+      "Rename one Lightroom Virtual Copy (its Copy Name), e.g. from the create_virtual_copy operation marker to a short display name such as \"v2\". Compare-and-set: the Copy must match expected_uuid and currently carry expected_copy_name, otherwise REVIEW_REQUIRED is returned and nothing changes. Idempotent when the Copy already has copy_name. Persist the Copy's catalog ID and UUID before renaming, because the marker no longer identifies the Copy afterwards. Master photos are rejected.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        photo_id: catalogPhotoId,
+        expected_uuid: { type: "string", minLength: 1, description: "UUID the Virtual Copy must have" },
+        expected_copy_name: {
+          type: "string",
+          maxLength: 128,
+          description: "Copy Name the Virtual Copy must currently have (compare-and-set)",
+        },
+        copy_name: {
+          type: "string",
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^\\S(?:[^\\x00-\\x1F\\x7F]*\\S)?$",
+          description: "New Copy Name, 1-64 characters, no control characters or outer spaces",
+        },
+      },
+      required: ["photo_id", "expected_uuid", "expected_copy_name", "copy_name"],
+    },
+  },
+  {
     name: "list_collections",
     luaHandler: "HandlerCollections.listCollections",
     description: "List all collections in Lightroom catalog (paginated, default limit 100)",
@@ -854,6 +881,11 @@ export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> =
     concurrency: "exclusive_backend",
     retry_policy: "readback_before_retry",
     safe_to_resume: false,
+  }),
+  rename_virtual_copy: mutatingSemantics("photo", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: true,
   }),
   list_collections: readOnlySemantics("catalog"),
   create_collection: mutatingSemantics("catalog"),

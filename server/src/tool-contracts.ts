@@ -329,12 +329,23 @@ const developCurveValueSchema = {
   description: "Flat x,y coordinate pairs (2-256 points)",
 };
 
-const developSettingsProperties = Object.fromEntries(
-  DEVELOP_SETTING_KEYS.map((key) => [
-    key,
-    developCurveSettingKeySet.has(key) ? developCurveValueSchema : developSettingValueSchema,
-  ]),
-);
+const developSettingsProperties = {
+  ...Object.fromEntries(
+    DEVELOP_SETTING_KEYS.map((key) => [
+      key,
+      developCurveSettingKeySet.has(key) ? developCurveValueSchema : developSettingValueSchema,
+    ]),
+  ),
+  // Geometric masks (radial / linear gradients)
+  // in Lightroom's MaskGroupBasedCorrections table shape. Replaces all masks.
+  MaskGroupBasedCorrections: {
+    type: "array",
+    items: { type: "object" },
+    maxItems: 50,
+    description:
+      "Lightroom MaskGroupBasedCorrections table (replaces existing masks). Use geometric masks only (Mask/CircularGradient, Mask/Gradient).",
+  },
+};
 
 const presetSelectorProperties = {
   preset_name: { type: "string", minLength: 1, description: "Develop preset name" },

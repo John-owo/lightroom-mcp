@@ -98,6 +98,9 @@ local ALLOWED_DEVELOP_SETTING_LOOKUP = {}
 for _, key in ipairs(ALLOWED_DEVELOP_SETTING_KEYS) do
     ALLOWED_DEVELOP_SETTING_LOOKUP[key] = true
 end
+-- Allow geometric mask tables (MaskGroupBasedCorrections) via set_develop_settings.
+ALLOWED_DEVELOP_SETTING_LOOKUP["MaskGroupBasedCorrections"] = true
+local TABLE_DEVELOP_SETTING_LOOKUP = { MaskGroupBasedCorrections = true }
 
 local CURVE_DEVELOP_SETTING_LOOKUP = {
     ToneCurvePV2012 = true,
@@ -147,6 +150,12 @@ end
 
 local function requireDevelopSettingValue(key, value)
     local valueType = type(value)
+    if TABLE_DEVELOP_SETTING_LOOKUP[key] then
+        if valueType ~= "table" then
+            error("Setting " .. tostring(key) .. " must be an array of correction tables")
+        end
+        return
+    end
     if CURVE_DEVELOP_SETTING_LOOKUP[key] and valueType == "table" then
         local count = 0
         for index, coordinate in pairs(value) do

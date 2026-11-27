@@ -148,12 +148,94 @@ local function requireAllowedDevelopSettingKey(key)
     end
 end
 
+local MAX_MASK_CORRECTIONS = 50
+local MAX_MASKS_PER_CORRECTION = 50
+local ALLOWED_MASK_TYPES = {
+    ["Mask/CircularGradient"] = true,
+    ["Mask/Gradient"] = true,
+}
+
+local function isScalar(value)
+    local valueType = type(value)
+    return valueType == "number" or valueType == "string" or valueType == "boolean"
+end
+
+-- Count entries of a dense 1..n array; errors on string keys or holes.
+local function requireDenseArray(value, name)
+    if type(value) ~= "table" then
+        error(name .. " must be an array")
+    end
+    local count = 0
+    for index, _ in pairs(value) do
+        if type(index) ~= "number" or index < 1 or index ~= math.floor(index) then
+            error(name .. " must be an array")
+        end
+        count = count + 1
+    end
+    if count ~= #value then
+        error(name .. " must be a dense array")
+    end
+    return count
+end
+
+-- Only geometric masks (radial / linear gradients) are writable. Brush,
+-- AI (subject/sky/person/object) and range masks carry pixel data or
+-- nested tables that cannot be round-tripped safely, so they are rejected.
+local function requireMaskGroupBasedCorrections(value)
+    local name = "MaskGroupBasedCorrections"
+    local count = requireDenseArray(value, name)
+    if count > MAX_MASK_CORRECTIONS then
+        error(name .. " must contain at most " .. MAX_MASK_CORRECTIONS .. " corrections")
+    end
+    for index = 1, count do
+        local correction = value[index]
+        local where = name .. "[" .. index .. "]"
+        if type(correction) ~= "table" then
+            error(where .. " must be a correction table")
+        end
+        if correction.What ~= "Correction" then
+            error(where .. ".What must be \"Correction\"")
+        end
+        for field, item in pairs(correction) do
+            if type(field) ~= "string" then
+                error(where .. " keys must be strings")
+            end
+            if field ~= "CorrectionMasks" and not isScalar(item) then
+                error(where .. "." .. field .. " must be a number, string or boolean"
+                    .. " (only geometric masks are supported)")
+            end
+        end
+        local masksName = where .. ".CorrectionMasks"
+        local maskCount = requireDenseArray(correction.CorrectionMasks, masksName)
+        if maskCount == 0 then
+            error(masksName .. " must contain at least one mask")
+        end
+        if maskCount > MAX_MASKS_PER_CORRECTION then
+            error(masksName .. " must contain at most " .. MAX_MASKS_PER_CORRECTION .. " masks")
+        end
+        for maskIndex = 1, maskCount do
+            local mask = correction.CorrectionMasks[maskIndex]
+            local maskWhere = masksName .. "[" .. maskIndex .. "]"
+            if type(mask) ~= "table" then
+                error(maskWhere .. " must be a mask table")
+            end
+            if not ALLOWED_MASK_TYPES[mask.What] then
+                error(maskWhere .. ".What " .. tostring(mask.What)
+                    .. " is not supported; only Mask/CircularGradient and Mask/Gradient are allowed")
+            end
+            for field, item in pairs(mask) do
+                if type(field) ~= "string" or not isScalar(item) then
+                    error(maskWhere .. "." .. tostring(field) .. " must be a number, string or boolean")
+                end
+            end
+        end
+    end
+end
+
 local function requireDevelopSettingValue(key, value)
     local valueType = type(value)
     if TABLE_DEVELOP_SETTING_LOOKUP[key] then
-        if valueType ~= "table" then
-            error("Setting " .. tostring(key) .. " must be an array of correction tables")
-        end
+        requireMaskGroupBasedCorrections(value)
         return
     end
     if CURVE_DEVELOP_SETTING_LOOKUP[key] and valueType == "table" then

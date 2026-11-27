@@ -149,6 +149,7 @@ local DISPATCH = {
     get_photo_metadata = HandlerMetadata.getPhotoMetadata,
     create_virtual_copy = HandlerVirtualCopy.createVirtualCopy,
     reconcile_virtual_copy = HandlerVirtualCopy.reconcileVirtualCopy,
+    rename_virtual_copy = HandlerVirtualCopy.renameVirtualCopy,
     set_keywords = HandlerOrganization.setKeywords,
     set_rating = HandlerOrganization.setRating,
     import_photos = HandlerImport.importPhotos,

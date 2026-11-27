@@ -442,3 +442,74 @@ describe("HandlerVirtualCopy.reconcileVirtualCopy", function()
         assert.are.equal(0, catalog.getWriteAccessCount())
     end)
 end)
+
+describe("HandlerVirtualCopy.renameVirtualCopy", function()
+    local function renameArgs(overrides)
+        local args = {
+            photo_id = "101",
+            expected_uuid = "uuid-copy",
+            expected_copy_name = "Lightroom MCP VC [op-001]",
+            copy_name = "v1",
+        }
+        for key, value in pairs(overrides or {}) do args[key] = value end
+        return args
+    end
+
+    it("renames a verified Copy when the current name matches", function()
+        local source = helper.fakePhoto(masterMeta({ countVirtualCopies = 1 }))
+        local copy = makeCopy(source)
+        local catalog, Handler = setup({ photos = { source, copy } })
+
+        local result = Handler.renameVirtualCopy(renameArgs())
+
+        assert.are.equal("renamed", result.result)
+        assert.are.equal("v1", result.copy.copy_name)
+        assert.are.equal("Lightroom MCP VC [op-001]", result.previous_copy_name)
+        assert.are.equal("v1", copy.__meta.copyName)
+        assert.are.equal(1, catalog.getWriteAccessCount())
+    end)
+
+    it("is idempotent when the Copy already carries the new name", function()
+        local source = helper.fakePhoto(masterMeta({ countVirtualCopies = 1 }))
+        local copy = makeCopy(source, { copyName = "v1" })
+        local catalog, Handler = setup({ photos = { source, copy } })
+
+        local result = Handler.renameVirtualCopy(renameArgs())
+
+        assert.are.equal("unchanged", result.result)
+        assert.are.equal(0, catalog.getWriteAccessCount())
+    end)
+
+    it("refuses when the current name differs from the expected one", function()
+        local source = helper.fakePhoto(masterMeta({ countVirtualCopies = 1 }))
+        local copy = makeCopy(source, { copyName = "my edit" })
+        local catalog, Handler = setup({ photos = { source, copy } })
+
+        local result = Handler.renameVirtualCopy(renameArgs())
+
+        assert.are.equal("REVIEW_REQUIRED", result.result)
+        assert.are.equal("my edit", copy.__meta.copyName)
+        assert.are.equal(0, catalog.getWriteAccessCount())
+    end)
+
+    it("rejects a Master, a UUID mismatch and an invalid name", function()
+        local source = helper.fakePhoto(masterMeta({ countVirtualCopies = 1 }))
+        local copy = makeCopy(source)
+        local catalog, Handler = setup({ photos = { source, copy } })
+
+        assert.has_error(function()
+            Handler.renameVirtualCopy(renameArgs({ photo_id = "100", expected_uuid = "uuid-master" }))
+        end)
+        assert.has_error(function()
+            Handler.renameVirtualCopy(renameArgs({ expected_uuid = "uuid-other" }))
+        end)
+        assert.has_error(function()
+            Handler.renameVirtualCopy(renameArgs({ copy_name = " v1" }))
+        end)
+        assert.has_error(function()
+            Handler.renameVirtualCopy(renameArgs({ copy_name = "" }))
+        end)
+        assert.are.equal("Lightroom MCP VC [op-001]", copy.__meta.copyName)
+        assert.are.equal(0, catalog.getWriteAccessCount())
+    end)
+end)

@@ -3,6 +3,7 @@ local LrApplication = import 'LrApplication'
 local PhotoLookup = require 'PhotoLookup'
 local PhotoIdentity = require 'PhotoIdentity'
 local Log = require 'Log'
+local JSON = require 'JSON'
 
 local MetadataHandler = {}
 
@@ -45,6 +46,109 @@ local function hslDevelopSettings(developSettings)
     })
 end
 
+-- Bounds for the MaskGroupBasedCorrections readback clone.
+local MASK_CLONE_MAX_DEPTH = 8
+local MASK_CLONE_MAX_NODES = 20000
+
+-- Keys whose values are Lightroom arrays even when empty, so they encode as
+-- `[]` instead of `{}`.
+local MASK_ARRAY_KEYS = { CorrectionMasks = true }
+
+local function isFiniteNumber(value)
+    return value == value and value ~= math.huge and value ~= -math.huge
+end
+
+-- Bounded deep clone of a mask table into JSON-safe values. Returns
+-- (clone, true) or (nil, false) when the table holds anything that cannot be
+-- represented faithfully as JSON: functions/userdata, non-finite numbers,
+-- cycles, sparse or mixed-key arrays, or tables over the depth/node caps.
+local function cloneMaskValue(value, depth, state, arrayWhenEmpty)
+    state.nodes = state.nodes + 1
+    if state.nodes > MASK_CLONE_MAX_NODES then
+        return nil, false
+    end
+
+    local valueType = type(value)
+    if valueType == "string" or valueType == "boolean" then
+        return value, true
+    end
+    if valueType == "number" then
+        if not isFiniteNumber(value) then return nil, false end
+        return value, true
+    end
+    if valueType ~= "table" or depth >= MASK_CLONE_MAX_DEPTH or state.seen[value] then
+        return nil, false
+    end
+
+    local count, maxIndex, hasStringKeys = 0, 0, false
+    for key, _ in pairs(value) do
+        local keyType = type(key)
+        if keyType == "string" then
+            hasStringKeys = true
+        elseif keyType == "number" and key >= 1 and key == math.floor(key) and isFiniteNumber(key) then
+            if key > maxIndex then maxIndex = key end
+        else
+            return nil, false
+        end
+        count = count + 1
+    end
+
+    local isArray = not hasStringKeys and (count > 0 or arrayWhenEmpty)
+    if isArray and maxIndex ~= count then
+        return nil, false -- sparse array
+    end
+    if hasStringKeys and maxIndex > 0 then
+        return nil, false -- mixed array/object keys would lose entries in JSON
+    end
+
+    state.seen[value] = true
+    local out
+    if isArray then
+        out = JSON.array({})
+        for index = 1, count do
+            local cloned, ok = cloneMaskValue(value[index], depth + 1, state, false)
+            if not ok then
+                state.seen[value] = nil
+                return nil, false
+            end
+            out[index] = cloned
+        end
+    else
+        out = {}
+        for key, item in pairs(value) do
+            local cloned, ok = cloneMaskValue(item, depth + 1, state, MASK_ARRAY_KEYS[key] == true)
+            if not ok then
+                state.seen[value] = nil
+                return nil, false
+            end
+            out[key] = cloned
+        end
+    end
+    state.seen[value] = nil
+    return out, true
+end
+
+-- Read back the photo's local-mask table. Never raises: an unreadable table
+-- is reported through `maskReadback` instead of failing get_photo_metadata.
+--   "ok"                 - MaskGroupBasedCorrections holds a cloned array
+--   "absent"             - Lightroom returned no mask table; `[]` returned
+--   "unsupported_values" - table could not be serialized; field omitted
+local function readMaskGroupBasedCorrections(developSettings)
+    local raw = type(developSettings) == "table" and developSettings.MaskGroupBasedCorrections or nil
+    if raw == nil then
+        return JSON.array({}), "absent"
+    end
+    if type(raw) ~= "table" then
+        return nil, "unsupported_values"
+    end
+
+    local okCall, cloned, supported = pcall(cloneMaskValue, raw, 0, { nodes = 0, seen = {} }, true)
+    if not okCall or not supported or not JSON.isArray(cloned) then
+        return nil, "unsupported_values"
+    end
+    return cloned, "ok"
+end
+
 function MetadataHandler.getPhotoMetadata(args)
     if not args.photo_id then
         error("photo_id is required")
@@ -71,6 +175,7 @@ function MetadataHandler.getPhotoMetadata(args)
 
         -- Get develop settings
         local developSettings = photo:getDevelopSettings()
+        local maskCorrections, maskReadback = readMaskGroupBasedCorrections(developSettings)
 
         -- GPS is a raw {latitude, longitude} table; omit the group when absent
         -- or when present but carrying no coordinates.
@@ -148,6 +253,11 @@ function MetadataHandler.getPhotoMetadata(args)
                 vibrance = developSettings.Vibrance,
                 saturation = developSettings.Saturation,
                 hsl = hslDevelopSettings(developSettings),
+                -- Raw Lightroom local-mask table (read side of
+                -- set_develop_settings MaskGroupBasedCorrections, which
+                -- replaces the whole set: merge before writing).
+                MaskGroupBasedCorrections = maskCorrections,
+                maskReadback = maskReadback,
             }
         }
         PhotoIdentity.enrich(photoData, photo)

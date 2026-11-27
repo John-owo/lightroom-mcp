@@ -5,6 +5,19 @@ type InputSchema = Tool["inputSchema"];
 export const OPERATION_SEMANTICS_META_KEY =
   "io.github.john-owo.lightroom-mcp/operation-semantics";
 
+/**
+ * Advertised on get_photo_metadata so clients can detect, at handshake and
+ * without a Lightroom call, that existing local masks are readable before a
+ * replace-all MaskGroupBasedCorrections write.
+ */
+export const MASK_READBACK_META_KEY =
+  "io.github.john-owo.lightroom-mcp/mask-readback";
+
+export const MASK_READBACK_META = {
+  version: 1,
+  field: "developSettings.MaskGroupBasedCorrections",
+} as const;
+
 export type OperationSideEffect =
   | "read_only"
   | "temporary"
@@ -56,6 +69,8 @@ export interface ToolContract {
   luaHandler: string;
   inputSchema: InputSchema;
   outputSchema?: Tool["outputSchema"];
+  /** Additional tool-specific `_meta` capability entries. */
+  extraMeta?: Record<string, unknown>;
   operationSemantics: OperationSemantics;
 }
 
@@ -307,6 +322,25 @@ export const PHOTO_METADATA_OUTPUT_SCHEMA: NonNullable<Tool["outputSchema"]> = {
       items: photoIdentityReferenceOutputSchema,
     },
     virtual_copy_count: { type: "integer", minimum: 0 },
+    // Other develop settings stay additive; only the mask readback is typed so
+    // clients can rely on an array when the field is present.
+    developSettings: {
+      type: "object",
+      properties: {
+        MaskGroupBasedCorrections: {
+          type: "array",
+          items: { type: "object" },
+          description:
+            "Raw Lightroom local-mask corrections (deep clone). Empty array when Lightroom reports none. Absent when the table could not be serialized (see maskReadback).",
+        },
+        maskReadback: {
+          type: "string",
+          enum: ["ok", "absent", "unsupported_values"],
+          description:
+            "ok: masks cloned; absent: Lightroom exposed no mask table (empty array returned); unsupported_values: mask table not serializable, field omitted.",
+        },
+      },
+    },
   },
   required: ["catalog_id", "uuid", "is_virtual_copy", "virtual_copy_count"],
 };
@@ -329,6 +363,33 @@ const developCurveValueSchema = {
   description: "Flat x,y coordinate pairs (2-256 points)",
 };
 
+/** Mask types accepted by set_develop_settings MaskGroupBasedCorrections. */
+export const WRITABLE_MASK_TYPES = ["Mask/CircularGradient", "Mask/Gradient"] as const;
+const MAX_MASK_CORRECTIONS = 50;
+const MAX_MASKS_PER_CORRECTION = 50;
+
+// Scalar-only extra fields keep the schema permissive about Lightroom's
+// numeric mask parameters while rejecting nested range/AI mask tables.
+const maskCorrectionWriteSchema = {
+  type: "object",
+  required: ["What", "CorrectionMasks"],
+  properties: {
+    What: { const: "Correction" },
+    CorrectionMasks: {
+      type: "array",
+      minItems: 1,
+      maxItems: MAX_MASKS_PER_CORRECTION,
+      items: {
+        type: "object",
+        required: ["What"],
+        properties: { What: { enum: [...WRITABLE_MASK_TYPES] } },
+        additionalProperties: developSettingValueSchema,
+      },
+    },
+  },
+  additionalProperties: developSettingValueSchema,
+};
+
 const developSettingsProperties = {
   ...Object.fromEntries(
     DEVELOP_SETTING_KEYS.map((key) => [
@@ -340,10 +401,10 @@ const developSettingsProperties = {
   // in Lightroom's MaskGroupBasedCorrections table shape. Replaces all masks.
   MaskGroupBasedCorrections: {
     type: "array",
-    items: { type: "object" },
-    maxItems: 50,
+    items: maskCorrectionWriteSchema,
+    maxItems: MAX_MASK_CORRECTIONS,
     description:
-      "Lightroom MaskGroupBasedCorrections table (replaces existing masks). Use geometric masks only (Mask/CircularGradient, Mask/Gradient).",
+      "Lightroom MaskGroupBasedCorrections table (replaces existing masks; read them first via get_photo_metadata developSettings.MaskGroupBasedCorrections and merge). Geometric masks only (Mask/CircularGradient, Mask/Gradient); brush, AI and range masks are rejected. An empty array clears all masks.",
   },
 };
 
@@ -407,8 +468,9 @@ const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
     name: "get_photo_metadata",
     luaHandler: "HandlerMetadata.getPhotoMetadata",
     description:
-      "Get detailed metadata and persistent identity for a Lightroom catalog photo: stable catalog ID, UUID, Master relationship, Virtual Copy status and siblings, EXIF, title/caption/headline, GPS (latitude/longitude/altitude), IPTC location (sublocation/city/stateProvince/country/isoCountryCode), copyright, and develop settings. Use the catalog ID for identity; source paths are display-only and are not accepted as selectors.",
+      "Get detailed metadata and persistent identity for a Lightroom catalog photo: stable catalog ID, UUID, Master relationship, Virtual Copy status and siblings, EXIF, title/caption/headline, GPS (latitude/longitude/altitude), IPTC location (sublocation/city/stateProvince/country/isoCountryCode), copyright, and develop settings including local masks (developSettings.MaskGroupBasedCorrections, read them before a replace-all mask write). Use the catalog ID for identity; source paths are display-only and are not accepted as selectors.",
     outputSchema: PHOTO_METADATA_OUTPUT_SCHEMA,
+    extraMeta: { [MASK_READBACK_META_KEY]: MASK_READBACK_META },
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -433,6 +495,33 @@ const TOOL_CONTRACT_DEFINITIONS: ToolContractDefinition[] = [
       "Read-only reconciliation of an interrupted Workflow Copy creation. Scans the catalog for the exact operation marker, validates the expected Master and Copy/Master relationship, and returns one verified Copy or REVIEW_REQUIRED; it never changes selection or creates a Copy.",
     outputSchema: VIRTUAL_COPY_OUTPUT_SCHEMA,
     inputSchema: workflowCopyInputSchema,
+  },
+  {
+    name: "rename_virtual_copy",
+    luaHandler: "HandlerVirtualCopy.renameVirtualCopy",
+    description:
+      "Rename one Lightroom Virtual Copy (its Copy Name), e.g. from the create_virtual_copy operation marker to a short display name such as \"v2\". Compare-and-set: the Copy must match expected_uuid and currently carry expected_copy_name, otherwise REVIEW_REQUIRED is returned and nothing changes. Idempotent when the Copy already has copy_name. Persist the Copy's catalog ID and UUID before renaming, because the marker no longer identifies the Copy afterwards. Master photos are rejected.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        photo_id: catalogPhotoId,
+        expected_uuid: { type: "string", minLength: 1, description: "UUID the Virtual Copy must have" },
+        expected_copy_name: {
+          type: "string",
+          maxLength: 128,
+          description: "Copy Name the Virtual Copy must currently have (compare-and-set)",
+        },
+        copy_name: {
+          type: "string",
+          minLength: 1,
+          maxLength: 64,
+          pattern: "^\\S(?:[^\\x00-\\x1F\\x7F]*\\S)?$",
+          description: "New Copy Name, 1-64 characters, no control characters or outer spaces",
+        },
+      },
+      required: ["photo_id", "expected_uuid", "expected_copy_name", "copy_name"],
+    },
   },
   {
     name: "list_collections",
@@ -792,6 +881,11 @@ export const OPERATION_SEMANTICS: Readonly<Record<string, OperationSemantics>> =
     concurrency: "exclusive_backend",
     retry_policy: "readback_before_retry",
     safe_to_resume: false,
+  }),
+  rename_virtual_copy: mutatingSemantics("photo", {
+    idempotent: true,
+    retry_policy: "readback_before_retry",
+    safe_to_resume: true,
   }),
   list_collections: readOnlySemantics("catalog"),
   create_collection: mutatingSemantics("catalog"),
